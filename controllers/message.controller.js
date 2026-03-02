@@ -1,0 +1,594 @@
+const Message = require("../models/messageModel");
+const User = require("../models/userModel");
+const Notification = require("../models/notificationModel");
+const Channel = require("../models/channelModel");
+const File = require("../models/fileModel");
+const validateObjectId = require("../utils/validateObjectId");
+const AppError = require("../utils/AppError");
+const { success } = require("../utils/response");
+const sanitizeHtml = require("sanitize-html");
+
+/* =====================================================
+   GET MESSAGES (Paginated + Thread Preview + Unread)
+===================================================== */
+exports.getMessages = async (req, res, next) => {
+  try {
+    const { channelId } = req.params;
+    let { page = 1, limit = 30 } = req.query;
+
+    validateObjectId(channelId, "Channel ID");
+
+    const channel = await Channel.findById(channelId).lean();
+    if (!channel) throw new AppError("Channel not found", 404);
+
+    const isMember = channel.members.some(
+      m => m.user.toString() === req.user.id
+    );
+
+    if (!isMember && req.user.role !== "Admin") {
+      throw new AppError("Access denied", 403);
+    }
+
+    page = Math.max(parseInt(page), 1);
+    limit = Math.min(Math.max(parseInt(limit), 1), 50);
+
+    const skip = (page - 1) * limit;
+
+    /* ============================================
+       FETCH ONLY TOP-LEVEL MESSAGES
+    ============================================ */
+    const messages = await Message.find({
+      channel: channelId,
+      parentMessage: null
+    })
+      .populate("sender", "name email avatar role")
+      .populate("attachments")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const messageIds = messages.map(m => m._id);
+
+    /* ============================================
+       FETCH ALL REPLIES FOR UNREAD CALCULATION
+    ============================================ */
+    const replies = await Message.find({
+      parentMessage: { $in: messageIds },
+      isDeleted: false
+    })
+      .select("parentMessage text sender createdAt seenBy")
+      .lean();
+
+    /* ============================================
+       CALCULATE:
+       - Last Reply
+       - Unread Count
+    ============================================ */
+    const replyMap = {};
+    const unreadCountMap = {};
+
+    replies.forEach(r => {
+      const parentId = r.parentMessage.toString();
+
+      // Track latest reply
+      if (
+        !replyMap[parentId] ||
+        new Date(r.createdAt) > new Date(replyMap[parentId].createdAt)
+      ) {
+        replyMap[parentId] = r;
+      }
+
+      // Count unread replies
+      const seen = r.seenBy?.some(
+        id => id.toString() === req.user.id
+      );
+
+      if (!seen) {
+        unreadCountMap[parentId] =
+          (unreadCountMap[parentId] || 0) + 1;
+      }
+    });
+
+    /* ============================================
+       ENHANCE MESSAGE OBJECT
+    ============================================ */
+    const enhancedMessages = messages.map(m => {
+      const id = m._id.toString();
+
+      return {
+        ...m,
+        lastReply: replyMap[id] || null,
+        unreadThreadCount: unreadCountMap[id] || 0,
+        hasUnreadThread: (unreadCountMap[id] || 0) > 0
+      };
+    });
+
+    /* ============================================
+       TOTAL COUNT (TOP-LEVEL ONLY)
+    ============================================ */
+    const total = await Message.countDocuments({
+      channel: channelId,
+      parentMessage: null
+    });
+
+    return success(res, {
+      messages: enhancedMessages.reverse(),
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: skip + messages.length < total
+      }
+    });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+/* =====================================================
+   SEND MESSAGE (Sanitized + Mention + Attachments)
+===================================================== */
+exports.sendMessage = async (req, res, next) => {
+  try {
+    const { channelId, text } = req.body;
+
+    validateObjectId(channelId, "Channel ID");
+
+    const channel = await Channel.findById(channelId);
+      if (!channel) throw new AppError("Channel not found", 404);
+
+      /* 🔐 Ensure user exists */
+      if (!req.user || !req.user.id) {
+        throw new AppError("Unauthorized", 401);
+      }
+
+      /* 🔐 Safe membership check */
+      const isMember = channel.members.some(m =>
+        m.user?.toString() === req.user.id
+      );
+
+      if (!isMember) {
+        throw new AppError("You are not a member of this channel", 403);
+      }
+
+    if (!text?.trim() && (!req.files || req.files.length === 0)) {
+      throw new AppError("Message cannot be empty", 400);
+    }
+
+    /* -------- Sanitize Input -------- */
+    const cleanText = text
+      ? sanitizeHtml(text.trim(), {
+          allowedTags: [],
+          allowedAttributes: {}
+        })
+      : "";
+
+    /* -------- Handle Attachments -------- */
+    let attachmentIds = [];
+
+    if (req.files?.length) {
+      for (const file of req.files) {
+        const fileDoc = await File.create({
+          name: file.originalname,
+          url: `/uploads/${file.filename}`,
+          type: file.mimetype,
+          size: file.size,
+          channel: channelId,
+          uploadedBy: req.user.id
+        });
+        attachmentIds.push(fileDoc._id);
+      }
+    }
+
+    /* -------- Extract Mentions -------- */
+    let mentionIds = [];
+    const mentionRegex = /@([a-zA-Z0-9_]+)/g;
+    const usernames = new Set();
+    let match;
+
+    while ((match = mentionRegex.exec(cleanText))) {
+      usernames.add(match[1].toLowerCase());
+    }
+
+    if (usernames.size > 0) {
+      const channelMemberIds = channel.members.map(m => m.user);
+
+      const mentionedUsers = await User.find({
+        _id: { $in: channelMemberIds },
+        name: {
+          $in: Array.from(usernames).map(
+            name => new RegExp(`^${name}$`, "i")
+          )
+        }
+      }).select("_id");
+
+      mentionIds = mentionedUsers.map(u => u._id);
+    }
+
+    /* -------- Create Message -------- */
+    const msg = await Message.create({
+      channel: channelId,
+      sender: req.user.id,
+      text: cleanText,
+      attachments: attachmentIds,
+      mentions: mentionIds
+    });
+
+    const populated = await Message.findById(msg._id)
+      .populate("sender", "name email avatar role")
+      .populate("attachments")
+      .populate("mentions", "name");
+
+    /* -------- Emit Socket -------- */
+    const io = req.app.get("io");
+    io.to(`channel:${channelId}`).emit("message:new", populated);
+
+    /* -------- Mention Notifications -------- */
+    for (const userId of mentionIds) {
+      if (userId.toString() === req.user.id) continue;
+
+      const notification = await Notification.create({
+        user: userId,
+        type: "mention",
+        text: `${req.user.name} mentioned you in #${channel.name}`,
+        link: `/channel/${channelId}`
+      });
+
+      io.to(`user:${userId}`).emit("notification:new", notification);
+    }
+
+    return success(res, populated, "Message sent", 201);
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+/* =====================================================
+   TOGGLE REACTION
+===================================================== */
+exports.toggleReaction = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+    const { emoji } = req.body;
+
+    validateObjectId(messageId, "Message ID");
+
+    if (!emoji) throw new AppError("Emoji is required", 400);
+
+    const message = await Message.findById(messageId);
+    if (!message) throw new AppError("Message not found", 404);
+
+    const channel = await Channel.findById(message.channel);
+    if (!channel) throw new AppError("Channel not found", 404);
+
+    const isMember = channel.members.some(
+      m => m.user.toString() === req.user.id
+    );
+
+    if (!isMember && req.user.role !== "Admin") {
+      throw new AppError("Access denied", 403);
+    }
+
+    const reaction = message.reactions.find(r => r.emoji === emoji);
+
+    if (!reaction) {
+      message.reactions.push({ emoji, users: [req.user.id] });
+    } else {
+      const index = reaction.users.findIndex(
+        u => u.toString() === req.user.id
+      );
+
+      if (index > -1) {
+        reaction.users.splice(index, 1);
+      } else {
+        reaction.users.push(req.user.id);
+      }
+
+      if (reaction.users.length === 0) {
+        message.reactions = message.reactions.filter(
+          r => r.emoji !== emoji
+        );
+      }
+    }
+
+    await message.save();
+
+    const populated = await Message.findById(message._id)
+      .populate("sender", "name avatar role");
+
+    const io = req.app.get("io");
+    io.to(`channel:${message.channel}`)
+      .emit("message:reaction", populated);
+
+    return success(res, populated, "Reaction updated");
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   EDIT MESSAGE (Supports Threads + Realtime)
+===================================================== */
+exports.editMessage = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+    const { text } = req.body;
+
+    validateObjectId(messageId, "Message ID");
+
+    const message = await Message.findById(messageId);
+    if (!message) throw new AppError("Message not found", 404);
+
+    const channel = await Channel.findById(message.channel);
+    if (!channel) throw new AppError("Channel not found", 404);
+
+    const isMember = channel.members.some(
+      m => m.user.toString() === req.user.id
+    );
+
+    if (!isMember && req.user.role !== "Admin") {
+      throw new AppError("Access denied", 403);
+    }
+
+    if (message.sender.toString() !== req.user.id) {
+      throw new AppError("Not allowed", 403);
+    }
+
+    if (!text || !text.trim()) {
+      throw new AppError("Message cannot be empty", 400);
+    }
+
+    /* ---------- Sanitize ---------- */
+    message.text = sanitizeHtml(text.trim(), {
+      allowedTags: [],
+      allowedAttributes: {}
+    });
+
+    message.editedAt = new Date();
+
+    await message.save();
+
+    /* ---------- Populate sender ---------- */
+    const populated = await Message.findById(message._id)
+      .populate("sender", "name avatar role");
+
+    const io = req.app.get("io");
+
+    /* ---------- Emit Correct Event ---------- */
+    if (message.parentMessage) {
+      // 🔥 Thread reply updated
+      io.to(`channel:${message.channel}`)
+        .emit("thread:replyUpdated", populated);
+    } else {
+      // 🔥 Normal message updated
+      io.to(`channel:${message.channel}`)
+        .emit("message:updated", populated);
+    }
+
+    return success(res, populated, "Message updated");
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+
+/* =====================================================
+   SOFT DELETE MESSAGE (Thread Aware + Safe ReplyCount)
+===================================================== */
+exports.deleteMessage = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+
+    validateObjectId(messageId, "Message ID");
+
+    const message = await Message.findById(messageId);
+    if (!message) throw new AppError("Message not found", 404);
+
+    const channel = await Channel.findById(message.channel);
+    if (!channel) throw new AppError("Channel not found", 404);
+
+    const isMember = channel.members.some(
+      m => m.user.toString() === req.user.id
+    );
+
+    if (!isMember && req.user.role !== "Admin") {
+      throw new AppError("Access denied", 403);
+    }
+
+    if (
+      message.sender.toString() !== req.user.id &&
+      req.user.role !== "Admin"
+    ) {
+      throw new AppError("Not allowed", 403);
+    }
+
+    /* ============================================
+       IF THIS IS A THREAD REPLY
+    ============================================ */
+    if (message.parentMessage) {
+      await Message.findByIdAndUpdate(
+        message.parentMessage,
+        {
+          $inc: { replyCount: -1 }
+        }
+      );
+
+      // Prevent negative replyCount
+      await Message.updateOne(
+        { _id: message.parentMessage, replyCount: { $lt: 0 } },
+        { $set: { replyCount: 0 } }
+      );
+    }
+
+    /* ============================================
+       SOFT DELETE
+    ============================================ */
+    message.text = "This message was deleted";
+    message.isDeleted = true;
+    message.deletedAt = new Date();
+
+    // Remove reactions on delete
+    message.reactions = [];
+
+    await message.save();
+
+    const io = req.app.get("io");
+
+    /* ============================================
+       EMIT CORRECT EVENT
+    ============================================ */
+    if (message.parentMessage) {
+      io.to(`channel:${message.channel}`)
+        .emit("thread:replyDeleted", {
+          messageId,
+          parentMessage: message.parentMessage
+        });
+    } else {
+      io.to(`channel:${message.channel}`)
+        .emit("message:deleted", messageId);
+    }
+
+    return success(res, null, "Message deleted");
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.addThreadReply = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+    const { text } = req.body;
+
+    validateObjectId(messageId, "Message ID");
+
+    const parent = await Message.findById(messageId);
+    if (!parent) throw new AppError("Parent message not found", 404);
+
+    const reply = await Message.create({
+      channel: parent.channel,
+      sender: req.user.id,
+      text: sanitizeHtml(text.trim(), {
+        allowedTags: [],
+        allowedAttributes: {}
+      }),
+      parentMessage: parent._id
+    });
+
+    await Message.findByIdAndUpdate(messageId, {
+      $inc: { replyCount: 1 }
+    });
+
+    const populated = await Message.findById(reply._id)
+      .populate("sender", "name avatar role");
+
+    const io = req.app.get("io");
+    io.to(`channel:${parent.channel}`)
+      .emit("thread:replyAdded", {
+        parentMessage: messageId,
+        reply: populated
+      });
+
+    res.status(201).json(populated);
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   GET THREAD REPLIES (Secure + Paginated)
+===================================================== */
+exports.getThreadReplies = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+    let { page = 1, limit = 20 } = req.query;
+
+    validateObjectId(messageId, "Message ID");
+
+    page = Math.max(parseInt(page), 1);
+    limit = Math.min(Math.max(parseInt(limit), 1), 50);
+
+    const skip = (page - 1) * limit;
+
+    /* ---------- Ensure Parent Message Exists ---------- */
+    const parent = await Message.findById(messageId).lean();
+    if (!parent) {
+      throw new AppError("Parent message not found", 404);
+    }
+
+    /* ---------- Ensure Channel Exists ---------- */
+    const channel = await Channel.findById(parent.channel).lean();
+    if (!channel) {
+      throw new AppError("Channel not found", 404);
+    }
+
+    /* ---------- Access Control ---------- */
+    const isMember = channel.members.some(
+      m => m.user.toString() === req.user.id
+    );
+
+    if (!isMember && req.user.role !== "Admin") {
+      throw new AppError("Access denied", 403);
+    }
+
+    /* ---------- Fetch Replies ---------- */
+    const replies = await Message.find({
+      parentMessage: messageId,
+      isDeleted: false
+    })
+      .populate("sender", "name avatar role")
+      .sort({ createdAt: 1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    const total = await Message.countDocuments({
+      parentMessage: messageId,
+      isDeleted: false
+    });
+
+    return success(res, {
+      replies,
+      pagination: {
+        page,
+        limit,
+        total,
+        hasMore: skip + replies.length < total
+      }
+    });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.markThreadRead = async (req, res, next) => {
+  try {
+    const { messageId } = req.params;
+
+    validateObjectId(messageId);
+
+    await Message.updateMany(
+      {
+        parentMessage: messageId,
+        seenBy: { $ne: req.user.id }
+      },
+      {
+        $addToSet: { seenBy: req.user.id }
+      }
+    );
+
+    res.json({ success: true });
+
+  } catch (err) {
+    next(err);
+  }
+};
