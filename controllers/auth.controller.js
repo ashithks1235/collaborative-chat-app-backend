@@ -2,11 +2,12 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const User = require("../models/userModel");
+const { emitAdminUpdate } = require("../socket");
 
 /* ===================================================
    REGISTER
 =================================================== */
-exports.register = async (req, res) => {
+exports.register = async (req, res, next) => {
   try {
     const { username, email, password } = req.body;
 
@@ -23,6 +24,10 @@ exports.register = async (req, res) => {
       password: hashedPassword,
       role: "Member", // 🔥 Force default role (no self-assigning Admin)
       isActive: true
+    });
+
+    emitAdminUpdate("user_created", {
+      userId: user._id
     });
 
     const token = jwt.sign(
@@ -43,8 +48,7 @@ exports.register = async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Server error" });
+    next(err);
   }
 };
 
@@ -89,8 +93,7 @@ exports.login = async (req, res, next) => {
     });
 
   } catch (err) {
-    console.error("🔥 LOGIN ERROR:", err);
-    res.status(500).json({ message: err.message });
+    next(err);
   }
 };
 
@@ -99,7 +102,7 @@ exports.login = async (req, res, next) => {
 /* ===================================================
    FORGOT PASSWORD
 =================================================== */
-exports.forgotPassword = async (req, res) => {
+exports.forgotPassword = async (req, res, next) => {
   try {
     const { email } = req.body;
 
@@ -129,6 +132,6 @@ exports.forgotPassword = async (req, res) => {
     });
 
   } catch (err) {
-    res.status(500).json({ message: "Password reset failed" });
+    next(err);
   }
 };

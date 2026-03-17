@@ -86,6 +86,7 @@ const channelSchema = new mongoose.Schema(
 
 // Member-based lookup
 channelSchema.index({ "members.user": 1 });
+channelSchema.index({ "members.user": 1, lastActivityAt: -1 });
 
 // Active channel sorting
 channelSchema.index({ lastActivityAt: -1 });

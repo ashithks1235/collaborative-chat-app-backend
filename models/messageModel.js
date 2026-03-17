@@ -22,6 +22,7 @@ const messageSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Channel",
       required: true,
+      index: true,
     },
 
     sender: {
@@ -47,6 +48,13 @@ const messageSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: "Message",
       default: null,
+      index: true,
+    },
+
+    replyTo: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Message",
+      default: null
     },
 
     replyCount: {
@@ -67,6 +75,7 @@ const messageSchema = new mongoose.Schema(
     pinned: {
       type: Boolean,
       default: false,
+      index: true,
     },
 
     seenBy: [
@@ -88,37 +97,51 @@ const messageSchema = new mongoose.Schema(
     isDeleted: {
       type: Boolean,
       default: false,
+      index: true,
     },
+
     threadReadBy: [
-        {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User"
-        }
-      ]
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+      },
+    ]
   },
   { timestamps: true }
 );
 
 /* ===============================
-   🔥 PERFORMANCE INDEXES
+   🚀 PERFORMANCE INDEXES
 =============================== */
 
-// Channel pagination
+/* Channel message pagination */
 messageSchema.index({ channel: 1, createdAt: -1 });
 
-// Thread loading
-messageSchema.index({ parentMessage: 1 });
+/* Thread replies */
+messageSchema.index({ parentMessage: 1, createdAt: 1 });
+messageSchema.index({ parentMessage: 1, isDeleted: 1 });
 
-// Channel + pinned
-messageSchema.index({ channel: 1, pinned: 1 });
+/* Fast pinned message lookup */
+messageSchema.index(
+  { channel: 1, pinned: 1 },
+  { partialFilterExpression: { pinned: true } }
+);
 
-// Mentions lookup
+/* Mention notifications lookup */
 messageSchema.index({ mentions: 1 });
 
-// Soft delete filter
-messageSchema.index({ isDeleted: 1 });
+/* Exclude deleted messages quickly */
+messageSchema.index({ channel: 1, isDeleted: 1 });
 
-// Text search
-messageSchema.index({ channel: 1, text: "text" });
+/* 🔎 Text search inside a channel */
+messageSchema.index({
+  text: "text"
+});
+
+/* Channel + text search optimization */
+messageSchema.index({
+  channel: 1,
+  text: "text"
+});
 
 module.exports = mongoose.model("Message", messageSchema);

@@ -1,7 +1,7 @@
-const Activity = require("../models/activityModel");
 const Channel = require("../models/channelModel");
 const validateObjectId = require("../utils/validateObjectId");
 const AppError = require("../utils/AppError");
+const Activity = require("../models/activityModel");
 
 /* =====================================================
    GET CHANNEL ACTIVITY (Paginated + Secured)

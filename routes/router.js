@@ -12,15 +12,14 @@ const dashboardController = require("../controllers/dashboard.controller");
 const notificationController = require("../controllers/notification.controller");
 const reminderController = require('../controllers/reminder.controller')
 const libraryController = require("../controllers/library.controller");
-const searchController = require("../controllers/search.controller");
 const noteController = require("../controllers/note.controller");
 const focusController = require("../controllers/focus.controller");
-const multer = require("multer");
-const upload = multer({ dest: "uploads/" });
+const upload = require("../middleware/upload.middleware");
 const activityController = require("../controllers/activity.controller");
 const authMiddleware = require("../middleware/auth.middleware");
 const roleMiddleware = require("../middleware/role.middleware");
 const { validateLogin } = require("../middleware/validate.middleware");
+const taskCommentController = require("../controllers/taskComment.controller");
 const router = new express.Router();
 /* ===========================
    AUTH (Public)
@@ -81,6 +80,11 @@ router.delete(
   authMiddleware,
   libraryController.deleteFromLibrary
 );
+router.post(
+  "/library/delete-many",
+  authMiddleware,
+  libraryController.deleteMany
+);
 
 /* ===========================
    CHANNELS
@@ -133,6 +137,12 @@ router.delete(
    MESSAGES
 =========================== */
 
+router.get(
+  "/messages/search",
+  authMiddleware,
+  messageController.searchMessages
+);
+
 // Get paginated messages
 router.get(
   "/messages/:channelId",
@@ -167,6 +177,12 @@ router.delete(
   "/messages/:messageId",
   authMiddleware,
   messageController.deleteMessage
+);
+
+router.put(
+  "/messages/:messageId/pin",
+  authMiddleware,
+  messageController.togglePin
 );
 
 /* ===========================
@@ -239,6 +255,38 @@ router.post(
   taskController.convertMessageToTask
 );
 
+router.get(
+  "/tasks/:taskId/comments",
+  authMiddleware,
+  taskCommentController.getTaskComments
+);
+
+router.post(
+  "/tasks/:taskId/comments",
+  authMiddleware,
+  taskCommentController.addTaskComment
+);
+
+router.post(
+  "/comments/:commentId/convert-to-task",
+  authMiddleware,
+  taskCommentController.convertCommentToTask
+);
+
+router.patch(
+  "/subtasks/:taskId/toggle",
+  authMiddleware,
+  taskController.toggleSubtask
+);
+
+router.get(
+  "/tasks/:taskId/subtasks",
+  authMiddleware,
+  taskController.getSubtasks
+);
+
+router.put("/tasks/:taskId", authMiddleware, taskController.updateTask);
+
 /* ===========================
    ANALYTICS
 =========================== */
@@ -250,19 +298,38 @@ router.get(
 );
 
 /* ===========================
-   GLOBAL SEARCH
-=========================== */
-
-router.get("/search", authMiddleware, searchController.globalSearch);
-
-/* ===========================
    NOTIFICATION
 =========================== */
 
-router.get("/notifications", authMiddleware, notificationController.getNotifications);
-router.put("/notifications/:id/read", authMiddleware, notificationController.markAsRead);
-router.put("/notifications/read-all", authMiddleware, notificationController.markAllAsRead);
+router.get(
+  "/notifications",
+  authMiddleware,
+  notificationController.getNotifications
+);
 
+router.get(
+  "/notifications/unread-count",
+  authMiddleware,
+  notificationController.getUnreadCount
+);
+
+router.put(
+  "/notifications/:id/read",
+  authMiddleware,
+  notificationController.markAsRead
+);
+
+router.put(
+  "/notifications/read-all",
+  authMiddleware,
+  notificationController.markAllAsRead
+);
+
+router.delete(
+  "/notifications/:id",
+  authMiddleware,
+  notificationController.deleteNotification
+);
 
 /* ===========================
    REMINDERS
@@ -326,13 +393,6 @@ router.get(
   authMiddleware,
   roleMiddleware(["Admin"]),
   adminController.getAdminOverview
-);
-
-router.get(
-  "/admin/activity",
-  authMiddleware,
-  roleMiddleware(["Admin"]),
-  adminController.getSystemActivity
 );
 
 router.get(

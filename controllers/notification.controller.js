@@ -85,7 +85,7 @@ exports.markAsRead = async (req, res, next) => {
     await notification.save();
 
     const io = req.app.get("io");
-    io.to(req.user.id).emit("notification:read", notificationId);
+    io.to(`user:${req.user.id}`).emit("notification:read", notificationId);
 
     res.status(200).json({ success: true });
 
@@ -106,7 +106,7 @@ exports.markAllAsRead = async (req, res, next) => {
     );
 
     const io = req.app.get("io");
-    io.to(req.user.id).emit("notification:allRead");
+    io.to(`user:${req.user.id}`).emit("notification:allRead");
 
     res.status(200).json({ success: true });
 

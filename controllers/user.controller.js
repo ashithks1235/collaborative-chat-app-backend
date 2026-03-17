@@ -58,21 +58,67 @@ exports.changePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
 
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
+    /* ================= VALIDATION ================= */
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        message: "Current and new password are required"
+      });
+    }
+
+    if (newPassword.length < 6) {
+      return res.status(400).json({
+        message: "New password must be at least 6 characters"
+      });
+    }
+
+    /* ================= GET USER ================= */
+
+    const user = await User.findById(req.user.id).select("+password");
+
+    if (!user) {
+      return res.status(404).json({
+        message: "User not found"
+      });
+    }
+
+    /* ================= CHECK CURRENT PASSWORD ================= */
 
     const isMatch = await bcrypt.compare(currentPassword, user.password);
-    if (!isMatch)
-      return res.status(400).json({ message: "Current password is incorrect" });
+
+    if (!isMatch) {
+      return res.status(400).json({
+        message: "Current password is incorrect"
+      });
+    }
+
+    /* ================= PREVENT SAME PASSWORD ================= */
+
+    const isSamePassword = await bcrypt.compare(newPassword, user.password);
+
+    if (isSamePassword) {
+      return res.status(400).json({
+        message: "New password cannot be the same as the current password"
+      });
+    }
+
+    /* ================= HASH NEW PASSWORD ================= */
 
     const salt = await bcrypt.genSalt(10);
     user.password = await bcrypt.hash(newPassword, salt);
 
     await user.save();
 
-    res.json({ message: "Password updated successfully" });
+    res.json({
+      message: "Password updated successfully"
+    });
+
   } catch (err) {
-    res.status(500).json({ message: "Password update failed" });
+    console.error("Password change error:", err);
+
+    res.status(500).json({
+      message: "Password update failed"
+    });
   }
 };
 

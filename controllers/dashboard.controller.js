@@ -10,7 +10,7 @@ exports.getDashboard = async (req, res) => {
     /* ===========================
        1️⃣ RECENT CHANNELS
     =========================== */
-    const channels = await Channel.find({ "members.users": userId })
+    const channels = await Channel.find({ "members.user": userId })
       .sort({ updatedAt: -1 })
       .limit(4)
       .select("name")
@@ -19,7 +19,7 @@ exports.getDashboard = async (req, res) => {
     /* ===========================
        2️⃣ RECENT TASKS
     =========================== */
-    const tasks = await Task.find({ createdBy: userId })
+    const tasks = await Task.find({ assignees: userId })
       .sort({ updatedAt: -1 })
       .limit(4)
       .select("title status project dueDate assignedTo")
@@ -40,20 +40,23 @@ exports.getDashboard = async (req, res) => {
 
     // Total Tasks Assigned to Me
     const totalTasks = await Task.countDocuments({
-      assignedTo: userId,
+      assignees: userId,
+      isDeleted: false
     });
 
     // Completed Tasks
     const completedTasks = await Task.countDocuments({
-      assignedTo: userId,
-      status: "done",
+      assignees: userId,
+      status: "completed",
+      isDeleted: false
     });
 
     // Overdue Tasks
     const overdueTasks = await Task.countDocuments({
-      assignedTo: userId,
-      status: { $ne: "done" },
+      assignees: userId,
+      status: { $ne: "completed" },
       dueDate: { $lt: today },
+      isDeleted: false
     });
 
     res.json({

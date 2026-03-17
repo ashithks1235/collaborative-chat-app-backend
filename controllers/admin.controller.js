@@ -2,7 +2,7 @@ const User = require("../models/userModel");
 const Channel = require("../models/channelModel");
 const Task = require("../models/taskModel");
 const Message = require("../models/messageModel");
-const Activity = require("../models/activityModel");
+const { getOnlineUsers } = require("../socket");
 
 // Get all users
 exports.getUsers = async (req, res, next) => {
@@ -60,38 +60,85 @@ exports.getAdminOverview = async (req, res) => {
       return res.status(403).json({ message: "Not authorized" });
     }
 
-    const totalUsers = await User.countDocuments();
-    const totalChannels = await Channel.countDocuments();
-    const totalTasks = await Task.countDocuments();
-    const totalMessages = await Message.countDocuments();
+    const today = new Date();
+    today.setHours(0,0,0,0);
 
-    const recentActivity = await Activity.find()
-      .populate("user", "name")
-      .sort({ createdAt: -1 })
-      .limit(10);
+    const [
+      totalUsers,
+      totalChannels,
+      totalTasks,
+      totalMessages,
+      messagesToday,
+      tasksToday
+    ] = await Promise.all([
+      User.countDocuments({ role: { $ne: "Admin" } }),
+      Channel.countDocuments(),
+      Task.countDocuments(),
+      Message.countDocuments(),
+
+      Message.countDocuments({ createdAt: { $gte: today } }),
+      Task.countDocuments({ createdAt: { $gte: today } })
+    ]);
+
+    /* ===============================
+        WEEKLY ANALYTICS
+      =============================== */
+
+      const last7Days = new Date();
+      last7Days.setDate(last7Days.getDate() - 6);
+      last7Days.setHours(0,0,0,0);
+
+      const messagesWeekly = await Message.aggregate([
+        {
+          $match: { createdAt: { $gte: last7Days } }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]);
+
+      const tasksWeekly = await Task.aggregate([
+        {
+          $match: { createdAt: { $gte: last7Days } }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ]);
 
     res.json({
       totalUsers,
       totalChannels,
       totalTasks,
       totalMessages,
-      recentActivity
+
+      liveUsers: getOnlineUsers(),
+      messagesToday,
+      tasksToday,
+      systemStatus: "Healthy",
+
+      weeklyAnalytics: {
+        messages: messagesWeekly,
+        tasks: tasksWeekly
+      }
+
     });
 
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
-};
-
-exports.getSystemActivity = async (req, res) => {
-  const Activity = require("../models/activityModel");
-
-  const activity = await Activity.find()
-    .populate("user", "name")
-    .sort({ createdAt: -1 })
-    .limit(50);
-
-  res.json(activity);
 };
 
 exports.getAllChannelsAdmin = async (req, res) => {

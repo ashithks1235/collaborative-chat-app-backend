@@ -2,7 +2,7 @@ const Task = require("../models/taskModel");
 const Message = require("../models/messageModel");
 const Reminder = require("../models/reminderModel");
 
-exports.getTodayFocus = async (req, res) => {
+exports.getTodayFocus = async (req, res, next) => {
   try {
     const todayStart = new Date();
     todayStart.setHours(0,0,0,0);
@@ -32,6 +32,6 @@ exports.getTodayFocus = async (req, res) => {
     res.json({ tasks, mentions, reminders });
 
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    next(err);
   }
 };

@@ -6,6 +6,7 @@ const {
   isChannelAdmin
 } = require("../utils/channelPermissions");
 const AppError = require("../utils/AppError");
+const { emitAdminUpdate } = require("../socket");
 
 /* =====================================================
    GET CHANNELS
@@ -56,6 +57,12 @@ exports.createChannel = async (req, res, next) => {
       ]
     });
 
+    emitAdminUpdate("channel_created", {
+      user: req.user.id,
+      channel: channel._id,
+      entityId: channel._id
+    });
+
     res.status(201).json(channel);
 
   } catch (err) {
@@ -98,7 +105,6 @@ exports.getChannelById = async (req, res, next) => {
     next(err);
   }
 };
-
 
 /* =====================================================
    ADD MEMBER

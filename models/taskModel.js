@@ -70,6 +70,12 @@ const taskSchema = new mongoose.Schema(
       default: "medium"
     },
 
+    status: {
+      type: String,
+      enum: ["todo", "inprogress", "completed"],
+      default: "todo"
+    },
+
     /* ========= META ========= */
 
     createdBy: {
@@ -84,11 +90,20 @@ const taskSchema = new mongoose.Schema(
       index: true
     },
 
+    parentTask: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Task",
+      default: null,
+      index: true
+    },
+
     isDeleted: {
       type: Boolean,
       default: false,
       index: true
     },
+
+    
 
     deletedAt: Date
   },
@@ -98,7 +113,9 @@ const taskSchema = new mongoose.Schema(
 /* ========= INDEXES ========= */
 
 taskSchema.index({ board: 1, column: 1, order: 1 });
+taskSchema.index({ board: 1, isDeleted: 1, parentTask: 1 });
 taskSchema.index({ project: 1 });
+taskSchema.index({ project: 1, isDeleted: 1 });
 taskSchema.index({ assignees: 1 });
 
 module.exports = mongoose.model("Task", taskSchema);

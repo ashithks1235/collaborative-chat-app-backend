@@ -6,6 +6,11 @@ const Project = require("../models/projectModel");
 const validateObjectId = require("../utils/validateObjectId");
 const AppError = require("../utils/AppError");
 const sanitizeHtml = require("sanitize-html");
+const TaskComment = require("../models/taskCommentModel");
+const Notification = require("../models/notificationModel");
+const User = require("../models/userModel");
+const Channel = require("../models/channelModel");
+const useAccessProject = require("../utils/canAccessProject");
 
 /* =====================================================
    GET TASKS (KANBAN)
@@ -18,11 +23,7 @@ exports.getTasks = async (req, res, next) => {
     const project = await Project.findById(projectId);
     if (!project) throw new AppError("Project not found", 404);
 
-    const isMember = project.members.some(
-      m => m.toString() === req.user.id
-    );
-
-    if (!isMember && req.user.role !== "Admin") {
+    if (!(await useAccessProject(project, req.user))) {
       throw new AppError("Access denied", 403);
     }
 
@@ -35,18 +36,115 @@ exports.getTasks = async (req, res, next) => {
 
     const tasks = await Task.find({
       board: board._id,
-      isDeleted: false
+      isDeleted: false,
+      parentTask: null
     })
       .populate("assignees", "name avatar role")
       .populate("createdBy", "name avatar role")
       .sort({ order: 1 })
       .lean();
 
+      // Fetch subtasks
+    const subtasks = await Task.find({
+      parentTask: { $ne: null },
+      isDeleted: false
+    })
+    .select("_id title status parentTask")
+    .lean();
+
+    // Map subtasks to parent tasks
+    const subtaskListMap = {};
+
+    subtasks.forEach((st) => {
+      const parentId = st.parentTask.toString();
+
+      if (!subtaskListMap[parentId]) {
+        subtaskListMap[parentId] = [];
+      }
+
+      subtaskListMap[parentId].push(st);
+    });
+
+    const commentStats = await TaskComment.aggregate([
+      {
+        $group: {
+          _id: "$task",
+          count: { $sum: 1 },
+          users: { $addToSet: "$user" }
+        }
+      }
+    ]);
+
+    /* ================= SUBTASK STATS ================= */
+
+      const subtaskStats = await Task.aggregate([
+        {
+          $match: {
+            parentTask: { $ne: null },
+            isDeleted: false
+          }
+        },
+        {
+          $group: {
+            _id: "$parentTask",
+            total: { $sum: 1 },
+            completed: {
+              $sum: {
+                $cond: [{ $eq: ["$status", "completed"] }, 1, 0]
+              }
+            }
+          }
+        }
+      ]);
+
+      const subtaskMap = {};
+
+      subtaskStats.forEach(s => {
+        subtaskMap[s._id.toString()] = {
+          total: s.total,
+          completed: s.completed
+        };
+      });
+
+    const statsMap = {};
+
+    commentStats.forEach(c => {
+      statsMap[c._id.toString()] = {
+        count: c.count,
+        users: c.users
+      };
+    });
+
     const grouped = columns.map(col => ({
       ...col,
-      tasks: tasks.filter(
-        t => t.column.toString() === col._id.toString()
-      )
+      tasks: tasks
+        .filter(t => t.column.toString() === col._id.toString())
+        .map(t => {
+
+          const sub = subtaskMap[t._id.toString()] || {
+            total: 0,
+            completed: 0
+          };
+
+          const progress =
+            sub.total > 0
+              ? Math.round((sub.completed / sub.total) * 100)
+              : 0;
+
+          return {
+            ...t,
+
+            commentsCount: statsMap[t._id.toString()]?.count || 0,
+            commentUsers: statsMap[t._id.toString()]?.users || [],
+
+            subtaskCount: sub.total,
+            completedSubtasks: sub.completed,
+            progress,
+
+            // 🔥 ADD THIS
+            subtasks: subtaskListMap[t._id.toString()] || []
+          };
+        })
     }));
 
     res.status(200).json({ success: true, data: grouped });
@@ -70,45 +168,76 @@ exports.createTask = async (req, res, next) => {
     const project = await Project.findById(projectId);
     if (!project) throw new AppError("Project not found", 404);
 
-    const isMember = project.members.some(
-      m => m.toString() === req.user.id
-    );
-
-    if (!isMember && req.user.role !== "Admin") {
+    if (!(await useAccessProject(project, req.user))) {
       throw new AppError("Access denied", 403);
     }
 
     const board = await Board.findOne({ project: projectId });
+
+    if (!board) throw new AppError("Board not found", 404);
+
     const backlog = await Column.findOne({
       board: board._id,
       title: "ToDo"
     });
+
+    if (!backlog) throw new AppError("ToDo column not found", 404);
 
     const order = await Task.countDocuments({
       column: backlog._id,
       isDeleted: false
     });
 
+    /* ===== CREATE TASK ===== */
+
     const task = await Task.create({
       board: board._id,
       column: backlog._id,
       project: projectId,
       channel: project.channel,
+
       title: sanitizeHtml(title.trim(), { allowedTags: [] }),
       description: sanitizeHtml(description || "", { allowedTags: [] }),
+
       dueDate,
       priority,
       assignees,
+
       createdBy: req.user.id,
-      order
+      order,
+      status: "todo"
     });
 
-    const io = req.app.get("io");
-    io.to(`project:${projectId}`).emit("task:created", task);
+    /* ===== POPULATE TASK FOR FRONTEND ===== */
+
+    const populatedTask = await Task.findById(task._id)
+      .populate("assignees", "name avatar role")
+      .populate("createdBy", "name avatar role");
+
+      const io = req.app.get("io");
+
+      const assigneeList = Array.isArray(assignees) ? assignees : [];
+      console.log("Assigning task to:", assigneeList);
+      for (const userId of assigneeList) {
+        if (userId.toString() === req.user.id) continue;
+        const notif = await Notification.create({
+          user: userId,
+          text: `${req.user.name} assigned you a task`,
+          type: "task_assigned",
+          link: `/projects/${projectId}`
+        });
+        io.to(`user:${userId}`).emit("notification:new", notif);
+      }
+
+    /* ===== SOCKET EMIT ===== */
+
+    io.to(`project:${projectId}`).emit("task:created", populatedTask);
+
+    /* ===== RESPONSE ===== */
 
     res.status(201).json({
       success: true,
-      data: task
+      data: populatedTask
     });
 
   } catch (err) {
@@ -133,7 +262,7 @@ exports.moveTask = async (req, res, next) => {
 
     const userId = req.user.id;
 
-    // ✅ Only assigned user can move
+    //  Only assigned user can move
     const isAssigned = task.assignees.some(
       a => a.toString() === userId
     );
@@ -142,7 +271,7 @@ exports.moveTask = async (req, res, next) => {
       throw new AppError("Only assigned user can move this task", 403);
     }
 
-    // 🔥 WORKFLOW VALIDATION
+    //  WORKFLOW VALIDATION
     const columns = await Column.find({ board: task.board })
       .sort({ order: 1 });
 
@@ -158,7 +287,7 @@ exports.moveTask = async (req, res, next) => {
       throw new AppError("Invalid column transition", 400);
     }
 
-    // ❌ Prevent skipping forward (ToDo → Completed)
+    //  Prevent skipping forward (ToDo → Completed)
     if (targetIndex - sourceIndex > 1) {
       throw new AppError(
         "You cannot skip workflow steps",
@@ -166,16 +295,60 @@ exports.moveTask = async (req, res, next) => {
       );
     }
 
-    // ✅ Allow backward freely
-    task.column = targetColumnId;
-    task.order = newOrder;
-    await task.save();
+    //  Allow backward freely
+      task.column = targetColumnId;
+      task.order = newOrder;
+
+      /* ================= UPDATE TASK STATUS ================= */
+
+      const targetColumn = columns.find(
+        c => c._id.toString() === targetColumnId.toString()
+      );
+
+      if (targetColumn) {
+
+        const title = targetColumn.title.toLowerCase().trim();
+
+          if (title.includes("todo")) {
+            task.status = "todo";
+          }
+
+          else if (title.includes("progress")) {
+            task.status = "inprogress";
+          }
+
+          else if (
+            title.includes("complete") ||
+            title.includes("done")
+          ) {
+            task.status = "completed";
+          }
+
+      }
+      const io = req.app.get("io");
+
+      await task.save();
+
+      if (task.status === "completed") {
+        try {
+          const notif = await Notification.create({
+            user: task.createdBy,
+            text: `Task "${task.title}" was completed`,
+            type: "task_completed",
+            link: `/projects/${task.project}`
+          });
+
+          io.to(`user:${task.createdBy}`).emit("notification:new", notif);
+
+        } catch (err) {
+          console.error("Notification failed:", err);
+        }
+      }
 
     const populatedTask = await Task.findById(task._id)
       .populate("assignees", "name avatar role")
       .populate("createdBy", "name avatar role");
 
-    const io = req.app.get("io");
     io.to(`project:${task.project}`)
       .emit("task:moved", populatedTask);
 
@@ -189,18 +362,25 @@ exports.moveTask = async (req, res, next) => {
   }
 };
 
-
 /* =====================================================
    CONVERT MESSAGE / THREAD REPLY TO TASK (SMART)
 ===================================================== */
 exports.convertMessageToTask = async (req, res, next) => {
   try {
+
     const { messageId } = req.params;
-    let { projectId, assignees = [], dueDate, priority } = req.body;
+
+    let {
+      projectId,
+      assignees = [],
+      dueDate,
+      priority
+    } = req.body || {};
 
     validateObjectId(messageId, "Message ID");
 
     const message = await Message.findById(messageId);
+
     if (!message) {
       throw new AppError("Message not found", 404);
     }
@@ -210,14 +390,14 @@ exports.convertMessageToTask = async (req, res, next) => {
     }
 
     /* =====================================================
-       🔥 AUTO DETECT PROJECT IF NOT PROVIDED
+       AUTO DETECT PROJECT IF NOT PROVIDED
     ===================================================== */
+
     if (!projectId) {
-      console.log("Channel:", message.channel);
+
       const autoProject = await Project.findOne({
         channel: message.channel
       });
-      console.log("Channel:", message.channel);
 
       if (!autoProject) {
         throw new AppError(
@@ -232,6 +412,7 @@ exports.convertMessageToTask = async (req, res, next) => {
     validateObjectId(projectId, "Project ID");
 
     const project = await Project.findById(projectId);
+
     if (!project) {
       throw new AppError("Project not found", 404);
     }
@@ -243,18 +424,16 @@ exports.convertMessageToTask = async (req, res, next) => {
       );
     }
 
-    const isMember = project.members.some(
-      m => m.toString() === req.user.id
-    );
-
-    if (!isMember && req.user.role !== "Admin") {
+    if (!(await useAccessProject(project, req.user))) {
       throw new AppError("Access denied", 403);
     }
 
     /* =====================================================
        GET BOARD + BACKLOG
     ===================================================== */
+
     const board = await Board.findOne({ project: projectId });
+
     if (!board) {
       throw new AppError("Board not found", 404);
     }
@@ -276,6 +455,7 @@ exports.convertMessageToTask = async (req, res, next) => {
     /* =====================================================
        CREATE TASK
     ===================================================== */
+
     const task = await Task.create({
       board: board._id,
       column: backlog._id,
@@ -292,21 +472,77 @@ exports.convertMessageToTask = async (req, res, next) => {
     });
 
     /* =====================================================
-       UPDATE MESSAGE (works for thread replies too)
+       SEND ASSIGNMENT NOTIFICATIONS
     ===================================================== */
+
+    const io = req.app.get("io");
+
+    const currentUser = await User.findById(req.user.id).select("name");
+    const assigneeList = Array.isArray(assignees) ? assignees : [];
+    
+    for (const userId of assigneeList) {
+
+      if (userId.toString() === req.user.id) continue;
+
+      try {
+
+        const notif = await Notification.create({
+          user: userId,
+          text: `${currentUser.name} assigned you a task`,
+          type: "task_assigned",
+          link: `/projects/${projectId}`
+        });
+
+        io.to(`user:${userId}`).emit("notification:new", notif);
+
+      } catch (err) {
+        console.error("Assignment notification failed:", err);
+      }
+
+    }
+
+    /* =====================================================
+       UPDATE MESSAGE
+    ===================================================== */
+
     message.convertedToTask = true;
     message.linkedTask = task._id;
+
     await message.save();
 
     /* =====================================================
-       SOCKET EMIT
+       POPULATE MESSAGE FOR SOCKET (FIXES UN AVATAR BUG)
     ===================================================== */
-    const io = req.app.get("io");
 
-    io.to(`project:${projectId}`).emit("task:created", task);
+    const populatedMessage = await Message.findById(message._id)
+      .populate("sender", "name avatar role")
+      .populate("attachments");
 
-    io.to(`channel:${message.channel}`)
-      .emit("message:updated", message);
+    /* =====================================================
+       SOCKET EMITS
+    ===================================================== */
+
+    const populatedTask = await Task.findById(task._id)
+      .populate("assignees", "name avatar role")
+      .populate("createdBy", "name avatar role");
+
+    io.to(`project:${projectId}`).emit("task:created", populatedTask);
+
+    if (message.parentMessage) {
+
+      io.to(`channel:${message.channel}`)
+        .emit("thread:replyUpdated", populatedMessage);
+
+    } else {
+
+      io.to(`channel:${message.channel}`)
+        .emit("message:updated", populatedMessage);
+
+    }
+
+    /* =====================================================
+       RESPONSE
+    ===================================================== */
 
     res.status(201).json({
       success: true,
@@ -359,6 +595,109 @@ exports.getMyTasks = async (req, res, next) => {
       .lean();
 
     res.status(200).json(tasks);
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   TOGGLE SUBTASK STATUS
+===================================================== */
+
+exports.toggleSubtask = async (req, res, next) => {
+  try {
+
+    const { taskId } = req.params;
+
+    const task = await Task.findById(taskId);
+
+    if (!task) {
+      return res.status(404).json({
+        message: "Subtask not found"
+      });
+    }
+
+    if (!task.parentTask) {
+      return res.status(400).json({
+        message: "Not a subtask"
+      });
+    }
+
+    task.status =
+      task.status === "completed" ? "todo" : "completed";
+
+    await task.save();
+
+    const io = req.app.get("io");
+
+    io.to(`project:${task.project}`)
+      .emit("subtask:updated", {
+        _id: task._id,
+        parentTask: task.parentTask,
+        status: task.status
+      });
+
+    res.json({
+      success: true,
+      data: task
+    });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   GET SUBTASKS
+===================================================== */
+
+exports.getSubtasks = async (req, res, next) => {
+  try {
+
+    const subtasks = await Task.find({
+      parentTask: req.params.taskId,
+      isDeleted: false
+    }).sort({ createdAt: 1 });
+
+    res.json({
+      success: true,
+      data: subtasks
+    });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   UPDATE TASK
+===================================================== */
+exports.updateTask = async (req, res, next) => {
+  try {
+    const { taskId } = req.params;
+    const { title, description, priority } = req.body;
+
+    const task = await Task.findById(taskId);
+
+    if (!task) {
+      return res.status(404).json({ message: "Task not found" });
+    }
+
+    if (title) task.title = title;
+    if (description !== undefined) task.description = description;
+    if (priority) task.priority = priority;
+
+    await task.save();
+
+    const updatedTask = await Task.findById(task._id)
+      .populate("assignees", "name avatar role")
+      .populate("createdBy", "name avatar role");
+
+    res.status(200).json({
+      success: true,
+      data: updatedTask
+    });
 
   } catch (err) {
     next(err);

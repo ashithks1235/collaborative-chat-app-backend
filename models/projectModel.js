@@ -47,5 +47,6 @@ const projectSchema = new mongoose.Schema(
 /* ========= INDEXES FOR PERFORMANCE ========= */
 projectSchema.index({ channel: 1, isArchived: 1 });
 projectSchema.index({ members: 1 });
+projectSchema.index({ channel: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Project", projectSchema);

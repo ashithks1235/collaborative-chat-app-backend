@@ -7,6 +7,8 @@ const validateObjectId = require("../utils/validateObjectId");
 const AppError = require("../utils/AppError");
 const { success } = require("../utils/response");
 const sanitizeHtml = require("sanitize-html");
+const { emitAdminUpdate } = require("../socket");
+const path = require("path");
 
 /* =====================================================
    GET MESSAGES (Paginated + Thread Preview + Unread)
@@ -43,6 +45,13 @@ exports.getMessages = async (req, res, next) => {
     })
       .populate("sender", "name email avatar role")
       .populate("attachments")
+      .populate({
+        path: "replyTo",
+        populate: [
+          { path: "sender", select: "name avatar" },
+          { path: "attachments" }
+        ]
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -133,7 +142,7 @@ exports.getMessages = async (req, res, next) => {
 ===================================================== */
 exports.sendMessage = async (req, res, next) => {
   try {
-    const { channelId, text } = req.body;
+    const { channelId, text, replyTo } = req.body;
 
     validateObjectId(channelId, "Channel ID");
 
@@ -171,10 +180,16 @@ exports.sendMessage = async (req, res, next) => {
 
     if (req.files?.length) {
       for (const file of req.files) {
+        let fileType = "document";
+
+        if (file.mimetype.startsWith("image")) fileType = "image";
+        else if (file.mimetype.startsWith("video")) fileType = "video";
+        else if (file.mimetype === "application/pdf") fileType = "document";
+
         const fileDoc = await File.create({
-          name: file.originalname,
+          name: path.basename(file.originalname),
           url: `/uploads/${file.filename}`,
-          type: file.mimetype,
+          type: fileType,
           size: file.size,
           channel: channelId,
           uploadedBy: req.user.id
@@ -214,13 +229,31 @@ exports.sendMessage = async (req, res, next) => {
       sender: req.user.id,
       text: cleanText,
       attachments: attachmentIds,
-      mentions: mentionIds
+      mentions: mentionIds,
+      replyTo: replyTo || null
+    });
+
+    emitAdminUpdate("message_sent", {
+      user: req.user.id,
+      channel: channelId,
+      entityId: msg._id
+    });
+
+    emitAdminUpdate("activity_created", {
+      type: "message_sent"
     });
 
     const populated = await Message.findById(msg._id)
       .populate("sender", "name email avatar role")
       .populate("attachments")
-      .populate("mentions", "name");
+      .populate("mentions", "name")
+      .populate({
+        path: "replyTo",
+        populate: [
+          { path: "sender", select: "name avatar" },
+          { path: "attachments" }
+        ]
+      });
 
     /* -------- Emit Socket -------- */
     const io = req.app.get("io");
@@ -299,13 +332,86 @@ exports.toggleReaction = async (req, res, next) => {
     await message.save();
 
     const populated = await Message.findById(message._id)
-      .populate("sender", "name avatar role");
+      .populate("sender", "name avatar role")
+      .populate("attachments");
 
     const io = req.app.get("io");
     io.to(`channel:${message.channel}`)
       .emit("message:reaction", populated);
 
     return success(res, populated, "Reaction updated");
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   TOGGLE PIN MESSAGE
+===================================================== */
+exports.togglePin = async (req, res, next) => {
+  try {
+
+    const { messageId } = req.params;
+
+    validateObjectId(messageId);
+
+    const message = await Message.findById(messageId);
+    if (!message) throw new AppError("Message not found", 404);
+
+    const channel = await Channel.findById(message.channel);
+
+    const isAdmin = channel.members.some(
+      m =>
+        m.user.toString() === req.user.id &&
+        m.role === "admin"
+    );
+
+    if (!isAdmin && req.user.role !== "Admin") {
+      throw new AppError("Only admins can pin messages", 403);
+    }
+
+    /* =====================================
+          ALLOW ONLY ONE PINNED MESSAGE
+        ===================================== */
+
+        if (!message.pinned) {
+
+          const previousPinned = await Message.findOne({
+            channel: message.channel,
+            pinned: true,
+            parentMessage: null
+          });
+
+          if (previousPinned) {
+            previousPinned.pinned = false;
+            await previousPinned.save();
+
+            const io = req.app.get("io");
+
+            io.to(`channel:${message.channel}`)
+              .emit("message:unpinned", previousPinned);
+          }
+
+        }
+    /* =====================================
+       TOGGLE PIN
+    ===================================== */
+
+    message.pinned = !message.pinned;
+
+    await message.save();
+
+    const populated = await Message.findById(message._id)
+      .populate("sender", "name avatar role")
+      .populate("attachments");
+
+    const io = req.app.get("io");
+
+    io.to(`channel:${message.channel}`)
+      .emit("message:pinned", populated);
+
+    res.json(populated);
 
   } catch (err) {
     next(err);
@@ -356,7 +462,8 @@ exports.editMessage = async (req, res, next) => {
 
     /* ---------- Populate sender ---------- */
     const populated = await Message.findById(message._id)
-      .populate("sender", "name avatar role");
+      .populate("sender", "name avatar role")
+      .populate("attachments");
 
     const io = req.app.get("io");
 
@@ -436,6 +543,9 @@ exports.deleteMessage = async (req, res, next) => {
 
     // Remove reactions on delete
     message.reactions = [];
+
+    // Remove attachments
+    message.attachments = [];
 
     await message.save();
 
@@ -587,6 +697,39 @@ exports.markThreadRead = async (req, res, next) => {
     );
 
     res.json({ success: true });
+
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* =====================================================
+   SEARCH MESSAGES (Channel scoped)
+===================================================== */
+exports.searchMessages = async (req, res, next) => {
+  try {
+
+    const { q, channelId } = req.query;
+
+    validateObjectId(channelId, "Channel ID");
+
+    if (!q || q.trim().length < 2) {
+      return res.json({ messages: [] });
+    }
+
+    const messages = await Message.find({
+      channel: channelId,
+      parentMessage: null,
+      isDeleted: false,
+      text: { $regex: q, $options: "i" }
+    })
+      .limit(20)
+      .populate("sender", "name avatar")
+      .populate("channel", "name")
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({ messages });
 
   } catch (err) {
     next(err);

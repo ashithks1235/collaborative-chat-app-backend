@@ -6,6 +6,7 @@ const Channel = require("../models/channelModel");
 const validateObjectId = require("../utils/validateObjectId");
 const AppError = require("../utils/AppError");
 const sanitizeHtml = require("sanitize-html");
+const useAccessProject = require("../utils/canAccessProject");
 
 /* =====================================================
    CREATE PROJECT
@@ -64,15 +65,22 @@ exports.createProject = async (req, res, next) => {
 exports.getProjects = async (req, res, next) => {
   try {
     const projects = await Project.find({
-      members: req.user.id,
       isArchived: false
     })
-      .populate("channel", "name")
+      .populate("channel")
       .populate("createdBy", "name avatar role")
       .populate("members", "name avatar role")
       .lean();
 
-    const projectIds = projects.map(p => p._id);
+      const filteredProjects = [];
+
+      for (const project of projects) {
+        if (await useAccessProject(project, req.user)) {
+          filteredProjects.push(project);
+        }
+      }
+
+    const projectIds = filteredProjects.map(p => p._id);
 
     const tasks = await Task.find({
       project: { $in: projectIds },
@@ -81,7 +89,7 @@ exports.getProjects = async (req, res, next) => {
       .populate("column", "title")
       .lean();
 
-    const enriched = projects.map(project => {
+    const enriched = filteredProjects.map(project => {
       const projectTasks = tasks.filter(
         t => t.project.toString() === project._id.toString()
       );
@@ -128,11 +136,7 @@ exports.getProjectById = async (req, res, next) => {
 
     if (!project) throw new AppError("Project not found", 404);
 
-    const isMember = project.members.some(
-      m => m._id.toString() === req.user.id
-    );
-
-    if (!isMember && req.user.role !== "Admin") {
+    if (!(await useAccessProject(project, req.user))) {
       throw new AppError("Access denied", 403);
     }
 

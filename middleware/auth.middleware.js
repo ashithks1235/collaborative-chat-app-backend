@@ -20,15 +20,17 @@ const authMiddleware = (req, res, next) => {
       return next(new AppError("Authorization token missing", 401));
     }
 
-    // 🔐 Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Attach only required fields
-    req.user = {
-      id: decoded.id,
-      role: decoded.role,
-      name: decoded.name // optional if included in token
-    };
+      if (!decoded || !decoded.id) {
+        return next(new AppError("Invalid token payload", 401));
+      }
+
+      req.user = {
+        id: decoded.id,
+        role: decoded.role,
+        name: decoded.name
+      };
 
     next();
 
