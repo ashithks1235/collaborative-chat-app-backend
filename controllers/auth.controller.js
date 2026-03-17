@@ -111,7 +111,6 @@ exports.forgotPassword = async (req, res, next) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // 🔥 Optional: Block inactive users
     if (!user.isActive) {
       return res.status(403).json({
         message: "Account is deactivated."
@@ -128,7 +127,7 @@ exports.forgotPassword = async (req, res, next) => {
 
     res.json({
       message: "Password reset link sent to email",
-      resetToken, // remove in production
+      resetToken,
     });
 
   } catch (err) {
