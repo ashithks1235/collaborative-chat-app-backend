@@ -41,7 +41,7 @@ app.use((err, req, res, next) => {
 app.set("trust proxy", 1);
 
 const corsOptions = {
-  origin: [process.env.CLIENT_URL || "https://collaborative-chat-app-frontend.vercel.app"],
+  origin: [process.env.CLIENT_URL || "http://localhost:5173"],
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
