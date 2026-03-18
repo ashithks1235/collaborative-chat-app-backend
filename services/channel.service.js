@@ -113,7 +113,11 @@ exports.addMember = async (currentUser, channelId, userId) => {
   await channel.save();
 
   return await Channel.findById(channelId)
-    .populate("members.user", "name email role avatar")
+    .populate({
+        path: "members.user",
+        select: "name avatar role",
+        options: { lean: true }
+        })
     .lean();
 };
 

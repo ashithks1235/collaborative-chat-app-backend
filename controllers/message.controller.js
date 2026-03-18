@@ -258,7 +258,7 @@ exports.togglePin = async (req, res, next) => {
     io.to(`channel:${message.channel}`)
       .emit("message:pinned", populated);
 
-    res.json(populated);
+    return success(res, populated, "Pin updated");
 
   } catch (err) {
     next(err);
@@ -453,7 +453,7 @@ exports.addThreadReply = async (req, res, next) => {
         reply: populated
       });
 
-    res.status(201).json(populated);
+    return success(res, populated, "Reply added", 201);
 
   } catch (err) {
     next(err);
@@ -543,7 +543,7 @@ exports.markThreadRead = async (req, res, next) => {
       }
     );
 
-    res.json({ success: true });
+    return success(res, null, "Thread marked read");
 
   } catch (err) {
     next(err);
@@ -576,7 +576,7 @@ exports.searchMessages = async (req, res, next) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json({ messages });
+    return success(res, { messages });
 
   } catch (err) {
     next(err);

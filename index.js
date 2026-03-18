@@ -41,7 +41,11 @@ app.use((err, req, res, next) => {
 app.set("trust proxy", 1);
 
 const corsOptions = {
-  origin: [process.env.CLIENT_URL || "http://localhost:5173"],
+  origin: [
+    "http://localhost:5173",
+    "http://localhost:4173",
+    process.env.CLIENT_URL
+  ].filter(Boolean),
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
