@@ -17,24 +17,80 @@ exports.getUsers = async (req, res, next) => {
   }
 };
 
-// Deactivate user
-exports.deactivateUser = async (req, res) => {
-  const { id } = req.params;
+exports.activateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
 
-  const user = await User.findByIdAndUpdate(
-    id,
-    { isActive: false },
-    { new: true }
-  );
+    const user = await User.findByIdAndUpdate(
+      id,
+      { isActive: true },
+      { new: true }
+    );
 
-  if (!user) {
-    return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.status(200).json({
+      message: "User activated successfully",
+      user
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: "Activation failed" });
   }
+};
 
-  res.status(200).json({
-    message: "User deactivated successfully",
-    user
-  });
+exports.deactivateUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findByIdAndUpdate(
+      id,
+      { isActive: false },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.status(200).json({
+      message: "User deactivated successfully",
+      user
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: "Deactivation failed" });
+  }
+};
+
+// Deactivate user
+exports.deleteUser = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const user = await User.findById(id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (user.role === "Admin") {
+      return res.status(403).json({
+        message: "Cannot delete Admin user"
+      });
+    }
+
+    await user.deleteOne();
+
+    res.status(200).json({
+      message: "User deleted successfully"
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: "Delete failed" });
+  }
 };
 
 exports.changeUserRole = async (req, res) => {

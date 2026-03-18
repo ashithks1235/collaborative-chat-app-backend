@@ -8,8 +8,8 @@ exports.getAllUsers = async (req, res) => {
     const currentUserId = req.user.id;
 
     const users = await User.find({
-      _id: { $ne: currentUserId },     // ❌ Remove logged-in user
-      role: { $ne: "Admin" }           // ❌ Remove Super Admin(s)
+      _id: { $ne: currentUserId },     
+      role: { $ne: "Admin" }           
     })
       .select("-password")
       .lean();
@@ -122,7 +122,7 @@ exports.changePassword = async (req, res) => {
   }
 };
 
-exports.deleteMe = async (req, res) => {
+exports.requestDeleteOtp = async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
 
@@ -130,46 +130,55 @@ exports.deleteMe = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ❌ Prevent Super Admin deletion
+    //  Prevent Admin delete OTP
     if (user.role === "Admin") {
       return res.status(403).json({
-        message: "Super Admin account cannot be deleted"
+        message: "Admin account cannot be deleted"
       });
     }
 
-    await User.findByIdAndDelete(req.user.id);
+    //  RATE LIMIT (1 OTP per 60 sec)
+    if (
+      user.deleteOtpExpires &&
+      user.deleteOtpExpires > Date.now() - 60 * 1000
+    ) {
+      return res.status(429).json({
+        message: "Please wait before requesting another OTP"
+      });
+    }
 
-    res.json({ message: "Account deleted successfully" });
+    //  GENERATE OTP
+    const rawOtp = Math.floor(100000 + Math.random() * 900000).toString();
 
-  } catch (err) {
-    res.status(500).json({ message: "Account deletion failed" });
-  }
-};
+    //  HASH OTP (VERY IMPORTANT)
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(rawOtp)
+      .digest("hex");
 
+    //  SAVE HASHED OTP
+    user.deleteOtp = hashedOtp;
+    user.deleteOtpExpires = Date.now() + 10 * 60 * 1000;
 
-exports.requestDeleteOtp = async (req, res) => {
-  try {
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: "User not found" });
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    user.deleteOtp = otp;
-    user.deleteOtpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
     await user.save();
 
     await sendEmail(
       user.email,
       "Confirm Account Deletion",
-      `Your OTP to delete your account is: ${otp}. It expires in 10 minutes.`
+      `Your OTP is ${rawOtp}. It expires in 10 minutes.`
     );
 
     res.json({ message: "OTP sent to your email" });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Failed to send OTP" });
+    console.error("OTP ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to send OTP"
+    });
   }
 };
+
 exports.deactivateUser = async (req, res) => {
   try {
     // Only Super Admin allowed
@@ -185,7 +194,7 @@ exports.deactivateUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ❌ Prevent deactivating Super Admin
+    //  Prevent deactivating Super Admin
     if (user.role === "Admin") {
       return res.status(403).json({
         message: "Cannot deactivate Super Admin"
@@ -248,7 +257,7 @@ exports.changeUserRole = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ❌ Prevent modifying Super Admin
+    //  Prevent modifying Super Admin
     if (user.role === "Admin") {
       return res.status(403).json({
         message: "Cannot modify Super Admin role"
@@ -279,7 +288,7 @@ exports.deleteUser = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ❌ Block deleting Super Admin
+    //  Block deleting Super Admin
     if (user.role === "Admin") {
       return res.status(403).json({
         message: "Cannot delete Super Admin"
@@ -301,19 +310,24 @@ exports.confirmDeleteAccount = async (req, res) => {
     const { otp } = req.body;
 
     const user = await User.findById(req.user.id);
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ❌ Block Super Admin
     if (user.role === "Admin") {
       return res.status(403).json({
         message: "Super Admin account cannot be deleted"
       });
     }
 
+    const hashedOtp = crypto
+      .createHash("sha256")
+      .update(otp)
+      .digest("hex");
+
     if (
-      user.deleteOtp !== otp ||
+      user.deleteOtp !== hashedOtp ||
       user.deleteOtpExpires < Date.now()
     ) {
       return res.status(400).json({
@@ -321,7 +335,10 @@ exports.confirmDeleteAccount = async (req, res) => {
       });
     }
 
-    await User.findByIdAndDelete(req.user.id);
+    user.deleteOtp = undefined;
+    user.deleteOtpExpires = undefined;
+
+    await user.deleteOne();
 
     res.json({ message: "Account deleted successfully" });
 

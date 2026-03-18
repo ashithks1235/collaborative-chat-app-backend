@@ -56,7 +56,6 @@ router.put(
   userController.updateMe
 );
 router.put("/users/change-password", authMiddleware, userController.changePassword);
-router.delete("/users/me", authMiddleware, userController.deleteMe);
 
 /* ===========================
    DASHBOARD
@@ -372,6 +371,20 @@ router.get(
   authMiddleware,
   roleMiddleware(["Admin"]),
   adminController.getUsers
+);
+
+router.put(
+  "/admin/users/:id/activate",
+  authMiddleware,
+  roleMiddleware(["Admin"]),
+  adminController.activateUser
+);
+
+router.delete(
+  "/admin/users/:id",
+  authMiddleware,
+  roleMiddleware(["Admin"]),
+  adminController.deleteUser
 );
 
 router.put(
