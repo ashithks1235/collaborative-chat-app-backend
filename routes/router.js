@@ -132,6 +132,13 @@ router.delete(
   channelController.unpinMessage
 );
 
+router.delete(
+  "/channels/:id",
+  authMiddleware,
+  roleMiddleware(["Admin", "Moderator"]),
+  channelController.deleteChannel
+);
+
 /* ===========================
    MESSAGES
 =========================== */

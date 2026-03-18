@@ -1,144 +1,82 @@
-const Notification = require("../models/notificationModel");
-const validateObjectId = require("../utils/validateObjectId");
-const AppError = require("../utils/AppError");
+const notificationService = require("../services/notification.service");
 
-/* =====================================================
-   GET NOTIFICATIONS (Paginated + Filter)
-===================================================== */
+/* ================= GET ================= */
+
 exports.getNotifications = async (req, res, next) => {
   try {
-    let { page = 1, limit = 20, unread } = req.query;
+    const data = await notificationService.getNotifications(
+      req.user.id,
+      req.query
+    );
 
-    page = Math.max(parseInt(page), 1);
-    limit = Math.min(Math.max(parseInt(limit), 1), 50);
-
-    const skip = (page - 1) * limit;
-
-    const filter = { user: req.user.id };
-
-    if (unread === "true") {
-      filter.read = false;
-    }
-
-    const notifications = await Notification.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
-
-    const total = await Notification.countDocuments(filter);
-
-    res.status(200).json({
-      notifications,
-      pagination: {
-        page,
-        limit,
-        total,
-        hasMore: skip + notifications.length < total
-      }
-    });
-
+    res.status(200).json(data);
   } catch (err) {
     next(err);
   }
 };
 
+/* ================= UNREAD COUNT ================= */
 
-/* =====================================================
-   GET UNREAD COUNT
-===================================================== */
 exports.getUnreadCount = async (req, res, next) => {
   try {
-    const count = await Notification.countDocuments({
-      user: req.user.id,
-      read: false
-    });
+    const count = await notificationService.getUnreadCount(
+      req.user.id
+    );
 
     res.status(200).json({ unreadCount: count });
-
   } catch (err) {
     next(err);
   }
 };
 
+/* ================= MARK ONE ================= */
 
-/* =====================================================
-   MARK SINGLE AS READ
-===================================================== */
 exports.markAsRead = async (req, res, next) => {
   try {
-    const notificationId = req.params.id;
-
-    validateObjectId(notificationId, "Notification ID");
-
-    const notification = await Notification.findById(notificationId);
-
-    if (!notification) {
-      throw new AppError("Notification not found", 404);
-    }
-
-    if (notification.user.toString() !== req.user.id) {
-      throw new AppError("Access denied", 403);
-    }
-
-    notification.read = true;
-    await notification.save();
-
-    const io = req.app.get("io");
-    io.to(`user:${req.user.id}`).emit("notification:read", notificationId);
-
-    res.status(200).json({ success: true });
-
-  } catch (err) {
-    next(err);
-  }
-};
-
-
-/* =====================================================
-   MARK ALL AS READ
-===================================================== */
-exports.markAllAsRead = async (req, res, next) => {
-  try {
-    await Notification.updateMany(
-      { user: req.user.id, read: false },
-      { $set: { read: true } }
+    const notificationId = await notificationService.markAsRead(
+      req.params.id,
+      req.user.id
     );
 
     const io = req.app.get("io");
-    io.to(`user:${req.user.id}`).emit("notification:allRead");
+
+    // 🔥 KEEP SOCKET HERE
+    io.to(`user:${req.user.id}`)
+      .emit("notification:read", notificationId);
 
     res.status(200).json({ success: true });
-
   } catch (err) {
     next(err);
   }
 };
 
+/* ================= MARK ALL ================= */
 
-/* =====================================================
-   DELETE NOTIFICATION (Optional)
-===================================================== */
-exports.deleteNotification = async (req, res, next) => {
+exports.markAllAsRead = async (req, res, next) => {
   try {
-    const notificationId = req.params.id;
+    await notificationService.markAllAsRead(req.user.id);
 
-    validateObjectId(notificationId, "Notification ID");
+    const io = req.app.get("io");
 
-    const notification = await Notification.findById(notificationId);
-
-    if (!notification) {
-      throw new AppError("Notification not found", 404);
-    }
-
-    if (notification.user.toString() !== req.user.id) {
-      throw new AppError("Access denied", 403);
-    }
-
-    await notification.deleteOne();
+    io.to(`user:${req.user.id}`)
+      .emit("notification:allRead");
 
     res.status(200).json({ success: true });
+  } catch (err) {
+    next(err);
+  }
+};
 
+/* ================= DELETE ================= */
+
+exports.deleteNotification = async (req, res, next) => {
+  try {
+    await notificationService.deleteNotification(
+      req.params.id,
+      req.user.id
+    );
+
+    res.status(200).json({ success: true });
   } catch (err) {
     next(err);
   }

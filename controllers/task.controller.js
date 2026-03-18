@@ -11,6 +11,7 @@ const Notification = require("../models/notificationModel");
 const User = require("../models/userModel");
 const Channel = require("../models/channelModel");
 const useAccessProject = require("../utils/canAccessProject");
+const taskService = require("../services/task.service");
 
 /* =====================================================
    GET TASKS (KANBAN)
@@ -160,80 +161,20 @@ exports.getTasks = async (req, res, next) => {
 ===================================================== */
 exports.createTask = async (req, res, next) => {
   try {
-    const { projectId } = req.params;
-    const { title, description, dueDate, priority, assignees } = req.body;
-
-    validateObjectId(projectId, "Project ID");
-
-    const project = await Project.findById(projectId);
-    if (!project) throw new AppError("Project not found", 404);
-
-    if (!(await useAccessProject(project, req.user))) {
-      throw new AppError("Access denied", 403);
-    }
-
-    const board = await Board.findOne({ project: projectId });
-
-    if (!board) throw new AppError("Board not found", 404);
-
-    const backlog = await Column.findOne({
-      board: board._id,
-      title: "ToDo"
-    });
-
-    if (!backlog) throw new AppError("ToDo column not found", 404);
-
-    const order = await Task.countDocuments({
-      column: backlog._id,
-      isDeleted: false
-    });
-
-    /* ===== CREATE TASK ===== */
-
-    const task = await Task.create({
-      board: board._id,
-      column: backlog._id,
-      project: projectId,
-      channel: project.channel,
-
-      title: sanitizeHtml(title.trim(), { allowedTags: [] }),
-      description: sanitizeHtml(description || "", { allowedTags: [] }),
-
-      dueDate,
-      priority,
-      assignees,
-
-      createdBy: req.user.id,
-      order,
-      status: "todo"
-    });
-
-    /* ===== POPULATE TASK FOR FRONTEND ===== */
+    const task = await taskService.createTask(
+      req.params.projectId,
+      req.body,
+      req.user
+    );
 
     const populatedTask = await Task.findById(task._id)
       .populate("assignees", "name avatar role")
       .populate("createdBy", "name avatar role");
 
-      const io = req.app.get("io");
+    const io = req.app.get("io");
 
-      const assigneeList = Array.isArray(assignees) ? assignees : [];
-      console.log("Assigning task to:", assigneeList);
-      for (const userId of assigneeList) {
-        if (userId.toString() === req.user.id) continue;
-        const notif = await Notification.create({
-          user: userId,
-          text: `${req.user.name} assigned you a task`,
-          type: "task_assigned",
-          link: `/projects/${projectId}`
-        });
-        io.to(`user:${userId}`).emit("notification:new", notif);
-      }
-
-    /* ===== SOCKET EMIT ===== */
-
-    io.to(`project:${projectId}`).emit("task:created", populatedTask);
-
-    /* ===== RESPONSE ===== */
+    io.to(`project:${req.params.projectId}`)
+      .emit("task:created", populatedTask);
 
     res.status(201).json({
       success: true,
@@ -251,103 +192,18 @@ exports.createTask = async (req, res, next) => {
 ===================================================== */
 exports.moveTask = async (req, res, next) => {
   try {
-    const { taskId } = req.params;
-    const { targetColumnId, newOrder } = req.body;
-
-    validateObjectId(taskId, "Task ID");
-    validateObjectId(targetColumnId, "Column ID");
-
-    const task = await Task.findById(taskId);
-    if (!task) throw new AppError("Task not found", 404);
-
-    const userId = req.user.id;
-
-    //  Only assigned user can move
-    const isAssigned = task.assignees.some(
-      a => a.toString() === userId
+    const task = await taskService.moveTask(
+      req.params.taskId,
+      req.body.targetColumnId,
+      req.body.newOrder,
+      req.user.id
     );
-
-    if (!isAssigned) {
-      throw new AppError("Only assigned user can move this task", 403);
-    }
-
-    //  WORKFLOW VALIDATION
-    const columns = await Column.find({ board: task.board })
-      .sort({ order: 1 });
-
-    const sourceIndex = columns.findIndex(c =>
-      c._id.toString() === task.column.toString()
-    );
-
-    const targetIndex = columns.findIndex(c =>
-      c._id.toString() === targetColumnId.toString()
-    );
-
-    if (sourceIndex === -1 || targetIndex === -1) {
-      throw new AppError("Invalid column transition", 400);
-    }
-
-    //  Prevent skipping forward (ToDo → Completed)
-    if (targetIndex - sourceIndex > 1) {
-      throw new AppError(
-        "You cannot skip workflow steps",
-        400
-      );
-    }
-
-    //  Allow backward freely
-      task.column = targetColumnId;
-      task.order = newOrder;
-
-      /* ================= UPDATE TASK STATUS ================= */
-
-      const targetColumn = columns.find(
-        c => c._id.toString() === targetColumnId.toString()
-      );
-
-      if (targetColumn) {
-
-        const title = targetColumn.title.toLowerCase().trim();
-
-          if (title.includes("todo")) {
-            task.status = "todo";
-          }
-
-          else if (title.includes("progress")) {
-            task.status = "inprogress";
-          }
-
-          else if (
-            title.includes("complete") ||
-            title.includes("done")
-          ) {
-            task.status = "completed";
-          }
-
-      }
-      const io = req.app.get("io");
-
-      await task.save();
-
-      if (task.status === "completed") {
-        try {
-          const notif = await Notification.create({
-            user: task.createdBy,
-            text: `Task "${task.title}" was completed`,
-            type: "task_completed",
-            link: `/projects/${task.project}`
-          });
-
-          io.to(`user:${task.createdBy}`).emit("notification:new", notif);
-
-        } catch (err) {
-          console.error("Notification failed:", err);
-        }
-      }
 
     const populatedTask = await Task.findById(task._id)
       .populate("assignees", "name avatar role")
       .populate("createdBy", "name avatar role");
+
+    const io = req.app.get("io");
 
     io.to(`project:${task.project}`)
       .emit("task:moved", populatedTask);

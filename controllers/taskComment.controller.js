@@ -3,6 +3,7 @@ const Task = require("../models/taskModel");
 const Column = require("../models/columnModel");
 const Board = require("../models/boardModel");
 const Notification = require("../models/notificationModel");
+const service = require("../services/taskComment.service");
 
 /* ===============================
    GET COMMENTS FOR TASK
@@ -10,23 +11,16 @@ const Notification = require("../models/notificationModel");
 
 exports.getTaskComments = async (req, res, next) => {
   try {
-
-    const comments = await TaskComment.find({
-      task: req.params.taskId
-    })
-      .populate("user", "name avatar role")
-      .sort({ createdAt: 1 });
+    const comments = await service.getTaskComments(req.params.taskId);
 
     res.json({
       success: true,
       data: comments
     });
-
   } catch (err) {
     next(err);
   }
 };
-
 /* ===============================
    ADD COMMENT
 =============================== */

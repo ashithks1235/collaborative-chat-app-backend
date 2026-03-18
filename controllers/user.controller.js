@@ -1,348 +1,76 @@
-const User = require("../models/userModel");
-const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
-const { sendEmail } = require("../utils/sendEmail");
+const userService = require("../services/user.service");
+const adminService = require("../services/admin.service");
 
-exports.getAllUsers = async (req, res) => {
+/* ================= USERS ================= */
+
+exports.getAllUsers = async (req, res, next) => {
   try {
-    const currentUserId = req.user.id;
-
-    const users = await User.find({
-      _id: { $ne: currentUserId },     
-      role: { $ne: "Admin" }           
-    })
-      .select("-password")
-      .lean();
-
+    const users = await userService.getAllUsers(req.user.id);
     res.json(users);
-
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch users" });
+    next(err);
   }
 };
 
-
-exports.getMe = async (req, res) => {
+exports.getMe = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id)
-      .select("-password")
-      .lean();
-
-    if (!user) return res.status(404).json({ message: "User not found" });
-
+    const user = await userService.getMe(req.user.id);
     res.json(user);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch user" });
+    next(err);
   }
 };
 
-exports.updateMe = async (req, res) => {
-  const updateData = {
-    name: req.body.name,
-  };
-
-  if (req.file) {
-    updateData.avatar = `/uploads/${req.file.filename}`;
-  }
-
-  const user = await User.findByIdAndUpdate(
-    req.user.id,
-    updateData,
-    { new: true }
-  ).select("-password");
-
-  res.json(user);
-};
-
-exports.changePassword = async (req, res) => {
+exports.updateMe = async (req, res, next) => {
   try {
-    const { currentPassword, newPassword } = req.body;
-
-    /* ================= VALIDATION ================= */
-
-    if (!currentPassword || !newPassword) {
-      return res.status(400).json({
-        message: "Current and new password are required"
-      });
-    }
-
-    if (newPassword.length < 6) {
-      return res.status(400).json({
-        message: "New password must be at least 6 characters"
-      });
-    }
-
-    /* ================= GET USER ================= */
-
-    const user = await User.findById(req.user.id).select("+password");
-
-    if (!user) {
-      return res.status(404).json({
-        message: "User not found"
-      });
-    }
-
-    /* ================= CHECK CURRENT PASSWORD ================= */
-
-    const isMatch = await bcrypt.compare(currentPassword, user.password);
-
-    if (!isMatch) {
-      return res.status(400).json({
-        message: "Current password is incorrect"
-      });
-    }
-
-    /* ================= PREVENT SAME PASSWORD ================= */
-
-    const isSamePassword = await bcrypt.compare(newPassword, user.password);
-
-    if (isSamePassword) {
-      return res.status(400).json({
-        message: "New password cannot be the same as the current password"
-      });
-    }
-
-    /* ================= HASH NEW PASSWORD ================= */
-
-    const salt = await bcrypt.genSalt(10);
-    user.password = await bcrypt.hash(newPassword, salt);
-
-    await user.save();
-
-    res.json({
-      message: "Password updated successfully"
-    });
-
+    const user = await userService.updateMe(
+      req.user.id,
+      req.body,
+      req.file
+    );
+    res.json(user);
   } catch (err) {
-    console.error("Password change error:", err);
-
-    res.status(500).json({
-      message: "Password update failed"
-    });
+    next(err);
   }
 };
 
-exports.requestDeleteOtp = async (req, res) => {
+/* ================= PASSWORD ================= */
+
+exports.changePassword = async (req, res, next) => {
   try {
-    const user = await User.findById(req.user.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    //  Prevent Admin delete OTP
-    if (user.role === "Admin") {
-      return res.status(403).json({
-        message: "Admin account cannot be deleted"
-      });
-    }
-
-    //  RATE LIMIT (1 OTP per 60 sec)
-    if (
-      user.deleteOtpExpires &&
-      user.deleteOtpExpires > Date.now() - 60 * 1000
-    ) {
-      return res.status(429).json({
-        message: "Please wait before requesting another OTP"
-      });
-    }
-
-    //  GENERATE OTP
-    const rawOtp = Math.floor(100000 + Math.random() * 900000).toString();
-
-    //  HASH OTP (VERY IMPORTANT)
-    const hashedOtp = crypto
-      .createHash("sha256")
-      .update(rawOtp)
-      .digest("hex");
-
-    //  SAVE HASHED OTP
-    user.deleteOtp = hashedOtp;
-    user.deleteOtpExpires = Date.now() + 10 * 60 * 1000;
-
-    await user.save();
-
-    await sendEmail(
-      user.email,
-      "Confirm Account Deletion",
-      `Your OTP is ${rawOtp}. It expires in 10 minutes.`
+    await userService.changePassword(
+      req.user.id,
+      req.body.currentPassword,
+      req.body.newPassword
     );
 
+    res.json({ message: "Password updated successfully" });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ================= DELETE FLOW ================= */
+
+exports.requestDeleteOtp = async (req, res, next) => {
+  try {
+    await userService.requestDeleteOtp(req.user.id);
     res.json({ message: "OTP sent to your email" });
-
   } catch (err) {
-    console.error("OTP ERROR:", err);
-
-    res.status(500).json({
-      message: "Failed to send OTP"
-    });
+    next(err);
   }
 };
 
-exports.deactivateUser = async (req, res) => {
+exports.confirmDeleteAccount = async (req, res, next) => {
   try {
-    // Only Super Admin allowed
-    if (req.user.role !== "Admin") {
-      return res.status(403).json({
-        message: "Only Super Admin can deactivate users"
-      });
-    }
-
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    //  Prevent deactivating Super Admin
-    if (user.role === "Admin") {
-      return res.status(403).json({
-        message: "Cannot deactivate Super Admin"
-      });
-    }
-
-    user.isActive = false;
-    await user.save();
-
-    res.json({ message: "User deactivated successfully" });
-
-  } catch (err) {
-    res.status(500).json({ message: "Deactivation failed" });
-  }
-};
-
-exports.activateUser = async (req, res) => {
-  try {
-    if (req.user.role !== "Admin") {
-      return res.status(403).json({
-        message: "Only Super Admin can activate users"
-      });
-    }
-
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    user.isActive = true;
-    await user.save();
-
-    res.json({ message: "User activated successfully" });
-
-  } catch (err) {
-    res.status(500).json({ message: "Activation failed" });
-  }
-};
-
-exports.changeUserRole = async (req, res) => {
-  try {
-    if (req.user.role !== "Admin") {
-      return res.status(403).json({
-        message: "Only Super Admin can change roles"
-      });
-    }
-
-    const { role } = req.body;
-
-    if (!["Moderator", "Member"].includes(role)) {
-      return res.status(400).json({
-        message: "Invalid role"
-      });
-    }
-
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    //  Prevent modifying Super Admin
-    if (user.role === "Admin") {
-      return res.status(403).json({
-        message: "Cannot modify Super Admin role"
-      });
-    }
-
-    user.role = role;
-    await user.save();
-
-    res.json({ message: "Role updated successfully" });
-
-  } catch (err) {
-    res.status(500).json({ message: "Role update failed" });
-  }
-};
-
-exports.deleteUser = async (req, res) => {
-  try {
-    if (req.user.role !== "Admin") {
-      return res.status(403).json({
-        message: "Only Super Admin can delete users"
-      });
-    }
-
-    const user = await User.findById(req.params.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    //  Block deleting Super Admin
-    if (user.role === "Admin") {
-      return res.status(403).json({
-        message: "Cannot delete Super Admin"
-      });
-    }
-
-    await user.deleteOne();
-
-    res.json({ message: "User deleted successfully" });
-
-  } catch (err) {
-    res.status(500).json({ message: "Deletion failed" });
-  }
-};
-
-
-exports.confirmDeleteAccount = async (req, res) => {
-  try {
-    const { otp } = req.body;
-
-    const user = await User.findById(req.user.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    if (user.role === "Admin") {
-      return res.status(403).json({
-        message: "Super Admin account cannot be deleted"
-      });
-    }
-
-    const hashedOtp = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
-
-    if (
-      user.deleteOtp !== hashedOtp ||
-      user.deleteOtpExpires < Date.now()
-    ) {
-      return res.status(400).json({
-        message: "Invalid or expired OTP"
-      });
-    }
-
-    user.deleteOtp = undefined;
-    user.deleteOtpExpires = undefined;
-
-    await user.deleteOne();
+    await userService.confirmDeleteAccount(
+      req.user.id,
+      req.body.otp
+    );
 
     res.json({ message: "Account deleted successfully" });
-
   } catch (err) {
-    res.status(500).json({ message: "Deletion failed" });
+    next(err);
   }
 };
+

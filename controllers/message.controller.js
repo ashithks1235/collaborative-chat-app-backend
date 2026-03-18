@@ -9,6 +9,7 @@ const { success } = require("../utils/response");
 const sanitizeHtml = require("sanitize-html");
 const { emitAdminUpdate } = require("../socket");
 const path = require("path");
+const messageService = require("../services/message.service");
 
 /* =====================================================
    GET MESSAGES (Paginated + Thread Preview + Unread)
@@ -142,136 +143,21 @@ exports.getMessages = async (req, res, next) => {
 ===================================================== */
 exports.sendMessage = async (req, res, next) => {
   try {
-    const { channelId, text, replyTo } = req.body;
-
-    validateObjectId(channelId, "Channel ID");
-
-    const channel = await Channel.findById(channelId);
-      if (!channel) throw new AppError("Channel not found", 404);
-
-      /* 🔐 Ensure user exists */
-      if (!req.user || !req.user.id) {
-        throw new AppError("Unauthorized", 401);
-      }
-
-      /* 🔐 Safe membership check */
-      const isMember = channel.members.some(m =>
-        m.user?.toString() === req.user.id
-      );
-
-      if (!isMember) {
-        throw new AppError("You are not a member of this channel", 403);
-      }
-
-    if (!text?.trim() && (!req.files || req.files.length === 0)) {
-      throw new AppError("Message cannot be empty", 400);
-    }
-
-    /* -------- Sanitize Input -------- */
-    const cleanText = text
-      ? sanitizeHtml(text.trim(), {
-          allowedTags: [],
-          allowedAttributes: {}
-        })
-      : "";
-
-    /* -------- Handle Attachments -------- */
-    let attachmentIds = [];
-
-    if (req.files?.length) {
-      for (const file of req.files) {
-        let fileType = "document";
-
-        if (file.mimetype.startsWith("image")) fileType = "image";
-        else if (file.mimetype.startsWith("video")) fileType = "video";
-        else if (file.mimetype === "application/pdf") fileType = "document";
-
-        const fileDoc = await File.create({
-          name: path.basename(file.originalname),
-          url: `/uploads/${file.filename}`,
-          type: fileType,
-          size: file.size,
-          channel: channelId,
-          uploadedBy: req.user.id
-        });
-        attachmentIds.push(fileDoc._id);
-      }
-    }
-
-    /* -------- Extract Mentions -------- */
-    let mentionIds = [];
-    const mentionRegex = /@([a-zA-Z0-9_]+)/g;
-    const usernames = new Set();
-    let match;
-
-    while ((match = mentionRegex.exec(cleanText))) {
-      usernames.add(match[1].toLowerCase());
-    }
-
-    if (usernames.size > 0) {
-      const channelMemberIds = channel.members.map(m => m.user);
-
-      const mentionedUsers = await User.find({
-        _id: { $in: channelMemberIds },
-        name: {
-          $in: Array.from(usernames).map(
-            name => new RegExp(`^${name}$`, "i")
-          )
-        }
-      }).select("_id");
-
-      mentionIds = mentionedUsers.map(u => u._id);
-    }
-
-    /* -------- Create Message -------- */
-    const msg = await Message.create({
-      channel: channelId,
-      sender: req.user.id,
-      text: cleanText,
-      attachments: attachmentIds,
-      mentions: mentionIds,
-      replyTo: replyTo || null
-    });
-
-    emitAdminUpdate("message_sent", {
-      user: req.user.id,
-      channel: channelId,
-      entityId: msg._id
-    });
-
-    emitAdminUpdate("activity_created", {
-      type: "message_sent"
-    });
+    const msg = await messageService.sendMessage(
+      req.body,
+      req.user,
+      req.files
+    );
 
     const populated = await Message.findById(msg._id)
       .populate("sender", "name email avatar role")
-      .populate("attachments")
-      .populate("mentions", "name")
-      .populate({
-        path: "replyTo",
-        populate: [
-          { path: "sender", select: "name avatar" },
-          { path: "attachments" }
-        ]
-      });
+      .populate("attachments");
 
-    /* -------- Emit Socket -------- */
     const io = req.app.get("io");
-    io.to(`channel:${channelId}`).emit("message:new", populated);
 
-    /* -------- Mention Notifications -------- */
-    for (const userId of mentionIds) {
-      if (userId.toString() === req.user.id) continue;
-
-      const notification = await Notification.create({
-        user: userId,
-        type: "mention",
-        text: `${req.user.name} mentioned you in #${channel.name}`,
-        link: `/channel/${channelId}`
-      });
-
-      io.to(`user:${userId}`).emit("notification:new", notification);
-    }
+    // 🔥 SOCKET KEPT HERE
+    io.to(`channel:${req.body.channelId}`)
+      .emit("message:new", populated);
 
     return success(res, populated, "Message sent", 201);
 
@@ -286,56 +172,17 @@ exports.sendMessage = async (req, res, next) => {
 ===================================================== */
 exports.toggleReaction = async (req, res, next) => {
   try {
-    const { messageId } = req.params;
-    const { emoji } = req.body;
-
-    validateObjectId(messageId, "Message ID");
-
-    if (!emoji) throw new AppError("Emoji is required", 400);
-
-    const message = await Message.findById(messageId);
-    if (!message) throw new AppError("Message not found", 404);
-
-    const channel = await Channel.findById(message.channel);
-    if (!channel) throw new AppError("Channel not found", 404);
-
-    const isMember = channel.members.some(
-      m => m.user.toString() === req.user.id
+    const message = await messageService.toggleReaction(
+      req.params.messageId,
+      req.body.emoji,
+      req.user
     );
 
-    if (!isMember && req.user.role !== "Admin") {
-      throw new AppError("Access denied", 403);
-    }
-
-    const reaction = message.reactions.find(r => r.emoji === emoji);
-
-    if (!reaction) {
-      message.reactions.push({ emoji, users: [req.user.id] });
-    } else {
-      const index = reaction.users.findIndex(
-        u => u.toString() === req.user.id
-      );
-
-      if (index > -1) {
-        reaction.users.splice(index, 1);
-      } else {
-        reaction.users.push(req.user.id);
-      }
-
-      if (reaction.users.length === 0) {
-        message.reactions = message.reactions.filter(
-          r => r.emoji !== emoji
-        );
-      }
-    }
-
-    await message.save();
-
     const populated = await Message.findById(message._id)
-      .populate("sender", "name avatar role")
-      .populate("attachments");
+      .populate("sender", "name avatar role");
 
     const io = req.app.get("io");
+
     io.to(`channel:${message.channel}`)
       .emit("message:reaction", populated);
 

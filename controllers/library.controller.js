@@ -1,72 +1,42 @@
-const File = require("../models/fileModel");
-const Channel = require("../models/channelModel");
+const libraryService = require("../services/library.service");
 
-/* =========================================
-   GET LIBRARY FILES (VISIBLE TO USER)
-========================================= */
-exports.getFiles = async (req, res) => {
+/* ================= GET FILES ================= */
+
+exports.getFiles = async (req, res, next) => {
   try {
-    const userId = req.user.id;
-
-    // find channels where user is member
-    const channels = await Channel.find({
-      "members.user": userId
-    }).select("_id");
-
-    const channelIds = channels.map(c => c._id);
-
-    const files = await File.find({
-      channel: { $in: channelIds },
-      hiddenFor: { $ne: userId }   // hide files deleted by this user
-    })
-      .populate("uploadedBy", "name avatar")
-      .sort({ createdAt: -1 });
-
+    const files = await libraryService.getFiles(req.user.id);
     res.json(files);
-
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    next(err);
   }
 };
 
+/* ================= DELETE ONE ================= */
 
-/* =========================================
-   DELETE SINGLE FILE FROM LIBRARY
-   (HIDE FOR CURRENT USER ONLY)
-========================================= */
-exports.deleteFromLibrary = async (req, res) => {
+exports.deleteFromLibrary = async (req, res, next) => {
   try {
-    const { id } = req.params;
-
-    await File.findByIdAndUpdate(id, {
-      $addToSet: { hiddenFor: req.user.id }
-    });
-
-    res.json({ success: true });
-
-  } catch (err) {
-    res.status(500).json({ message: err.message });
-  }
-};
-
-
-/* =========================================
-   BULK DELETE FILES FROM LIBRARY
-========================================= */
-exports.deleteMany = async (req, res) => {
-  try {
-    const { ids } = req.body;
-
-    await File.updateMany(
-      { _id: { $in: ids } },
-      {
-        $addToSet: { hiddenFor: req.user.id }
-      }
+    await libraryService.deleteFromLibrary(
+      req.params.id,
+      req.user.id
     );
 
     res.json({ success: true });
-
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    next(err);
+  }
+};
+
+/* ================= DELETE MANY ================= */
+
+exports.deleteMany = async (req, res, next) => {
+  try {
+    await libraryService.deleteMany(
+      req.body.ids,
+      req.user.id
+    );
+
+    res.json({ success: true });
+  } catch (err) {
+    next(err);
   }
 };

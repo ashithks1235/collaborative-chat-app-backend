@@ -1,211 +1,92 @@
-const User = require("../models/userModel");
-const Channel = require("../models/channelModel");
-const Task = require("../models/taskModel");
-const Message = require("../models/messageModel");
-const { getOnlineUsers } = require("../socket");
+const adminService = require("../services/admin.service");
 
-// Get all users
+/* ================= USERS ================= */
+
 exports.getUsers = async (req, res, next) => {
   try {
-    const users = await User.find()
-      .select("name email role")
-      .lean();
-
+    const users = await adminService.getUsers();
     res.json(users);
   } catch (err) {
     next(err);
   }
 };
 
-exports.activateUser = async (req, res) => {
+exports.activateUser = async (req, res, next) => {
   try {
-    const { id } = req.params;
-
-    const user = await User.findByIdAndUpdate(
-      id,
-      { isActive: true },
-      { new: true }
+    const user = await adminService.activateUser(
+      req.user,
+      req.params.id
     );
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
 
     res.status(200).json({
       message: "User activated successfully",
       user
     });
-
   } catch (err) {
-    res.status(500).json({ message: "Activation failed" });
+    next(err);
   }
 };
 
-exports.deactivateUser = async (req, res) => {
+exports.deactivateUser = async (req, res, next) => {
   try {
-    const { id } = req.params;
-
-    const user = await User.findByIdAndUpdate(
-      id,
-      { isActive: false },
-      { new: true }
+    const user = await adminService.deactivateUser(
+      req.user,
+      req.params.id
     );
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
 
     res.status(200).json({
       message: "User deactivated successfully",
       user
     });
-
   } catch (err) {
-    res.status(500).json({ message: "Deactivation failed" });
+    next(err);
   }
 };
 
-// Deactivate user
-exports.deleteUser = async (req, res) => {
+exports.deleteUser = async (req, res, next) => {
   try {
-    const { id } = req.params;
-
-    const user = await User.findById(id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    if (user.role === "Admin") {
-      return res.status(403).json({
-        message: "Cannot delete Admin user"
-      });
-    }
-
-    await user.deleteOne();
+    await adminService.deleteUser(req.user, req.params.id);
 
     res.status(200).json({
       message: "User deleted successfully"
     });
-
   } catch (err) {
-    res.status(500).json({ message: "Delete failed" });
+    next(err);
   }
 };
 
-exports.changeUserRole = async (req, res) => {
-  const { role } = req.body;
-
-  if (!["Admin", "Moderator", "Member"].includes(role)) {
-    return res.status(400).json({ message: "Invalid role" });
-  }
-
-  const user = await User.findByIdAndUpdate(
-    req.params.id,
-    { role },
-    { new: true }
-  ).select("-password");
-
-  res.json(user);
-};
-
-exports.getAdminOverview = async (req, res) => {
+exports.changeUserRole = async (req, res, next) => {
   try {
+    const user = await adminService.changeUserRole(
+      req.user,
+      req.params.id,
+      req.body.role
+    );
 
-    if (req.user.role !== "Admin") {
-      return res.status(403).json({ message: "Not authorized" });
-    }
-
-    const today = new Date();
-    today.setHours(0,0,0,0);
-
-    const [
-      totalUsers,
-      totalChannels,
-      totalTasks,
-      totalMessages,
-      messagesToday,
-      tasksToday
-    ] = await Promise.all([
-      User.countDocuments({ role: { $ne: "Admin" } }),
-      Channel.countDocuments(),
-      Task.countDocuments(),
-      Message.countDocuments(),
-
-      Message.countDocuments({ createdAt: { $gte: today } }),
-      Task.countDocuments({ createdAt: { $gte: today } })
-    ]);
-
-    /* ===============================
-        WEEKLY ANALYTICS
-      =============================== */
-
-      const last7Days = new Date();
-      last7Days.setDate(last7Days.getDate() - 6);
-      last7Days.setHours(0,0,0,0);
-
-      const messagesWeekly = await Message.aggregate([
-        {
-          $match: { createdAt: { $gte: last7Days } }
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
-            },
-            count: { $sum: 1 }
-          }
-        },
-        { $sort: { _id: 1 } }
-      ]);
-
-      const tasksWeekly = await Task.aggregate([
-        {
-          $match: { createdAt: { $gte: last7Days } }
-        },
-        {
-          $group: {
-            _id: {
-              $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
-            },
-            count: { $sum: 1 }
-          }
-        },
-        { $sort: { _id: 1 } }
-      ]);
-
-    res.json({
-      totalUsers,
-      totalChannels,
-      totalTasks,
-      totalMessages,
-
-      liveUsers: getOnlineUsers(),
-      messagesToday,
-      tasksToday,
-      systemStatus: "Healthy",
-
-      weeklyAnalytics: {
-        messages: messagesWeekly,
-        tasks: tasksWeekly
-      }
-
-    });
-
+    res.json(user);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    next(err);
   }
 };
 
-exports.getAllChannelsAdmin = async (req, res) => {
-  try {
-    const channels = await Channel.find()
-      .populate("createdBy", "name email")
-      .populate("members.user", "name email role")
-      .lean();
+/* ================= DASHBOARD ================= */
 
+exports.getAdminOverview = async (req, res, next) => {
+  try {
+    const data = await adminService.getAdminOverview(req.user);
+    res.json(data);
+  } catch (err) {
+    next(err);
+  }
+};
+
+/* ================= CHANNELS ================= */
+
+exports.getAllChannelsAdmin = async (req, res, next) => {
+  try {
+    const channels = await adminService.getAllChannelsAdmin();
     res.json(channels);
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch channels" });
+    next(err);
   }
 };
