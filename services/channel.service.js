@@ -20,15 +20,16 @@ exports.getChannels = async (user) => {
     });
   }
 
-  return channels
+  channels = await Channel.find({
+    "members.user": user.id
+    })
     .populate("members.user", "name avatar role")
-    .lean()
-    .then(channels =>
-      channels.map(ch => ({
-        ...ch,
-        members: ch.members.filter(m => m.user)
-      }))
-    );
+    .lean();
+
+    return channels.map(ch => ({
+      ...ch,
+      members: ch.members.filter(m => m.user)
+    }));
 };
 
 /* ================= CREATE CHANNEL ================= */
