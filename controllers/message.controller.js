@@ -561,7 +561,7 @@ exports.searchMessages = async (req, res, next) => {
     validateObjectId(channelId, "Channel ID");
 
     if (!q || q.trim().length < 2) {
-      return res.json({ messages: [] });
+      return success(res, { messages: [] });
     }
 
     const messages = await Message.find({

@@ -92,6 +92,7 @@ router.post(
 router.get("/channels", authMiddleware, channelController.getChannels);
 router.post("/channels", authMiddleware,roleMiddleware(["Admin", "Moderator"]), channelController.createChannel);
 router.get("/channels/:id", authMiddleware, channelController.getChannelById);
+router.put("/channels/:id", authMiddleware, channelController.updateChannel);
 
 router.post(
   "/channels/:id/members",

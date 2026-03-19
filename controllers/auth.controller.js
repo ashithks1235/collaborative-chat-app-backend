@@ -15,6 +15,7 @@ exports.register = async (req, res, next) => {
       message: "Registration successful",
       token,
       user: {
+        _id: user._id,
         id: user._id,
         name: user.name,
         email: user.email,
@@ -34,6 +35,7 @@ exports.login = async (req, res, next) => {
     res.json({
       token,
       user: {
+        _id: user._id,
         id: user._id,
         name: user.name,
         email: user.email,

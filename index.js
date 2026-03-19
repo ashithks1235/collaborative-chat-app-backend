@@ -3,6 +3,7 @@ const http = require("http");
 const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const helmet = require("helmet");
+const path = require("path");
 
 require("dotenv").config();
 require("./config/env.validation");
@@ -40,12 +41,28 @@ app.use((err, req, res, next) => {
 // If running behind proxy (nginx, render, etc.)
 app.set("trust proxy", 1);
 
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:4173",
+  ...(process.env.CLIENT_URL || "")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+];
+
 const corsOptions = {
-  origin: [
-    "http://localhost:5173",
-    "http://localhost:4173",
-    process.env.CLIENT_URL
-  ].filter(Boolean),
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+
+    const isExactMatch = allowedOrigins.includes(origin);
+    const isVercelPreview = /^https:\/\/.+\.vercel\.app$/.test(origin);
+
+    if (isExactMatch || isVercelPreview) {
+      return callback(null, true);
+    }
+
+    return callback(new Error("Not allowed by CORS"));
+  },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
@@ -92,7 +109,7 @@ app.use("/api", router);
 
 app.use(
   "/uploads",
-  express.static("uploads", {
+  express.static(path.join(__dirname, "uploads"), {
     setHeaders: (res) => {
       res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
     }

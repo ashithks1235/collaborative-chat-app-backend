@@ -10,26 +10,19 @@ const AppError = require("../utils/AppError");
 /* ================= GET CHANNELS ================= */
 
 exports.getChannels = async (user) => {
-  let channels;
+  const filter = user.role === "Admin"
+    ? {}
+    : { "members.user": user.id };
 
-  if (user.role === "Admin") {
-    channels = await Channel.find();
-  } else {
-    channels = await Channel.find({
-      "members.user": user.id
-    });
-  }
-
-  channels = await Channel.find({
-    "members.user": user.id
-    })
+  const channels = await Channel.find(filter)
     .populate("members.user", "name avatar role")
+    .populate("createdBy", "name email avatar")
     .lean();
 
-    return channels.map(ch => ({
-      ...ch,
-      members: ch.members.filter(m => m.user)
-    }));
+  return channels.map(ch => ({
+    ...ch,
+    members: ch.members.filter(m => m.user)
+  }));
 };
 
 /* ================= CREATE CHANNEL ================= */
@@ -63,6 +56,7 @@ exports.getChannelById = async (user, channelId) => {
   if (user.role === "Admin") {
     channel = await Channel.findById(channelId)
       .populate("members.user", "name email role avatar")
+      .populate("createdBy", "name email avatar")
       .lean();
   } else {
     channel = await Channel.findOne({
@@ -70,12 +64,44 @@ exports.getChannelById = async (user, channelId) => {
       "members.user": user.id
     })
       .populate("members.user", "name email role avatar")
+      .populate("createdBy", "name email avatar")
       .lean();
   }
 
   if (!channel) throw new AppError("Channel not found", 404);
 
   return channel;
+};
+
+exports.updateChannel = async (currentUser, channelId, name) => {
+  validateObjectId(channelId, "Channel ID");
+
+  if (!name || !name.trim()) {
+    throw new AppError("Channel name is required", 400);
+  }
+
+  const channel = await Channel.findById(channelId);
+  if (!channel) throw new AppError("Channel not found", 404);
+
+  const member = channel.members.find(
+    (m) => m.user.toString() === currentUser.id
+  );
+
+  const canEdit =
+    currentUser.role === "Admin" ||
+    (member && member.role === "admin");
+
+  if (!canEdit) {
+    throw new AppError("Only channel admins can update channel", 403);
+  }
+
+  channel.name = name.trim();
+  await channel.save();
+
+  return Channel.findById(channelId)
+    .populate("members.user", "name email role avatar")
+    .populate("createdBy", "name email avatar")
+    .lean();
 };
 
 /* ================= ADD MEMBER ================= */
@@ -232,4 +258,3 @@ exports.getAllChannelsAdmin = async () => {
     .sort({ createdAt: -1 })
     .lean();
 };
-

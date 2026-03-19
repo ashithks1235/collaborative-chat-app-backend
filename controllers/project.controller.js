@@ -1,4 +1,5 @@
 const projectService = require("../services/project.service");
+const { success } = require("../utils/response");
 
 /* ================= CREATE ================= */
 
@@ -72,7 +73,7 @@ exports.getProjectOverview = async (req, res, next) => {
   try {
     const data = await projectService.getProjectOverview(req.user);
 
-    res.status(200).json(data);
+    return success(res, data);
   } catch (err) {
     next(err);
   }

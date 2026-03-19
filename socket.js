@@ -50,9 +50,29 @@ async function emitAdminUpdate(type, payload = {}) {
 const onlineUsers = new Map();
 
 const initSocket = (server) => {
+  const allowedOrigins = [
+    "http://localhost:5173",
+    "http://localhost:4173",
+    ...(process.env.CLIENT_URL || "")
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter(Boolean)
+  ];
+
   io = new Server(server, {
     cors: {
-      origin: process.env.CLIENT_URL || "http://localhost:5173",
+      origin: (origin, callback) => {
+        if (!origin) return callback(null, true);
+
+        const isExactMatch = allowedOrigins.includes(origin);
+        const isVercelPreview = /^https:\/\/.+\.vercel\.app$/.test(origin);
+
+        if (isExactMatch || isVercelPreview) {
+          return callback(null, true);
+        }
+
+        return callback(new Error("Not allowed by Socket.IO CORS"));
+      },
       credentials: true,
       methods: ["GET", "POST", "PUT", "DELETE"]
     }

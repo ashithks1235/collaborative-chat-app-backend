@@ -1,12 +1,13 @@
 const channelService = require("../services/channel.service");
 const { emitAdminUpdate } = require("../socket");
+const { success } = require("../utils/response");
 
 /* ================= GET CHANNELS ================= */
 
 exports.getChannels = async (req, res, next) => {
   try {
     const channels = await channelService.getChannels(req.user);
-    res.status(200).json(channels);
+    return success(res, channels);
   } catch (err) {
     next(err);
   }
@@ -27,7 +28,7 @@ exports.createChannel = async (req, res, next) => {
       entityId: channel._id
     });
 
-    res.status(201).json(channel);
+    return success(res, channel, "Channel created", 201);
   } catch (err) {
     next(err);
   }
@@ -42,7 +43,21 @@ exports.getChannelById = async (req, res, next) => {
       req.params.id
     );
 
-    res.status(200).json(channel);
+    return success(res, channel);
+  } catch (err) {
+    next(err);
+  }
+};
+
+exports.updateChannel = async (req, res, next) => {
+  try {
+    const channel = await channelService.updateChannel(
+      req.user,
+      req.params.id,
+      req.body.name
+    );
+
+    return success(res, channel, "Channel updated");
   } catch (err) {
     next(err);
   }
@@ -58,7 +73,7 @@ exports.addMemberToChannel = async (req, res, next) => {
       req.body.userId
     );
 
-    res.status(200).json(channel);
+    return success(res, channel);
   } catch (err) {
     next(err);
   }
@@ -74,9 +89,7 @@ exports.promoteToAdmin = async (req, res, next) => {
       req.params.userId
     );
 
-    res.status(200).json({
-      message: "User promoted to Channel Admin"
-    });
+    return success(res, null, "User promoted to Channel Admin");
   } catch (err) {
     next(err);
   }
@@ -92,9 +105,7 @@ exports.removeMember = async (req, res, next) => {
       req.params.userId
     );
 
-    res.status(200).json({
-      message: "Member removed successfully"
-    });
+    return success(res, null, "Member removed successfully");
   } catch (err) {
     next(err);
   }
@@ -113,7 +124,7 @@ exports.pinMessage = async (req, res, next) => {
     io.to(`channel:${req.params.channelId}`)
       .emit("channel:pinned", req.params.messageId);
 
-    res.status(200).json({ success: true, messageId: req.params.messageId });
+    return success(res, { messageId: req.params.messageId }, "Message pinned");
   } catch (err) {
     next(err);
   }
@@ -127,7 +138,7 @@ exports.unpinMessage = async (req, res, next) => {
     io.to(`channel:${req.params.channelId}`)
       .emit("channel:unpinned");
 
-    res.status(200).json({ success: true });
+    return success(res, null, "Message unpinned");
   } catch (err) {
     next(err);
   }
@@ -137,10 +148,7 @@ exports.deleteChannel = async (req, res, next) => {
   try {
     await channelService.deleteChannel(req.user, req.params.id);
 
-    res.status(200).json({
-      success: true,
-      message: "Channel deleted successfully"
-    });
+    return success(res, null, "Channel deleted successfully");
 
   } catch (err) {
     next(err);
@@ -152,7 +160,7 @@ exports.deleteChannel = async (req, res, next) => {
 exports.getAllChannelsAdmin = async (req, res, next) => {
   try {
     const channels = await channelService.getAllChannelsAdmin();
-    res.status(200).json(channels);
+    return success(res, channels);
   } catch (err) {
     next(err);
   }
