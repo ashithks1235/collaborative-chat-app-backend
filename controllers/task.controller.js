@@ -192,7 +192,7 @@ exports.createTask = async (req, res, next) => {
 ===================================================== */
 exports.moveTask = async (req, res, next) => {
   try {
-    const task = await taskService.moveTask(
+    const { task, completedNow } = await taskService.moveTask(
       req.params.taskId,
       req.body.targetColumnId,
       req.body.newOrder,
@@ -207,6 +207,36 @@ exports.moveTask = async (req, res, next) => {
 
     io.to(`project:${task.project}`)
       .emit("task:moved", populatedTask);
+
+    if (completedNow) {
+      try {
+        const actor = await User.findById(req.user.id).select("name");
+
+        if (actor?.name) {
+          const recipientIds = new Set([
+            task.createdBy?.toString(),
+            ...task.assignees.map((assigneeId) => assigneeId.toString())
+          ]);
+
+          recipientIds.delete(req.user.id);
+
+          for (const recipientId of recipientIds) {
+            if (!recipientId) continue;
+
+            const notif = await Notification.create({
+              user: recipientId,
+              text: `${actor.name} completed a task`,
+              type: "task_completed",
+              link: `/projects/${task.project}`
+            });
+
+            io.to(`user:${recipientId}`).emit("notification:new", notif);
+          }
+        }
+      } catch (notificationError) {
+        console.error("Task completion notification failed:", notificationError);
+      }
+    }
 
     res.status(200).json({
       success: true,

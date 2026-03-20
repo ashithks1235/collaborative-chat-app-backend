@@ -120,15 +120,21 @@ exports.convertCommentToTask = async (req, res, next) => {
       parentTask: parentTask._id
     });
 
-    const notif = await Notification.create({
-        user: parentTask.createdBy,
-        text: `${req.user.name} created a subtask`,
-        type: "subtask_created",
-        link: `/projects/${parentTask.project}`
+    if (parentTask.createdBy?.toString() !== req.user.id) {
+      try {
+        const notif = await Notification.create({
+          user: parentTask.createdBy,
+          text: `${req.user.name} created a subtask`,
+          type: "subtask_created",
+          link: `/projects/${parentTask.project}`
         });
 
         io.to(`user:${parentTask.createdBy}`)
-        .emit("notification:new", notif);
+          .emit("notification:new", notif);
+      } catch (notificationError) {
+        console.error("Subtask notification failed:", notificationError);
+      }
+    }
 
     io.to(`project:${parentTask.project}`)
         .emit("subtask:created", subtask);

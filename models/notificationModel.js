@@ -11,7 +11,9 @@ const notificationSchema = new mongoose.Schema(
         "thread",
         "system",
         "task_assigned",
-        "task_completed"
+        "task_completed",
+        "task_comment",
+        "subtask_created"
       ]
     },
 

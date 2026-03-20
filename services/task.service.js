@@ -91,6 +91,7 @@ exports.createTask = async (projectId, data, user) => {
 exports.moveTask = async (taskId, targetColumnId, newOrder, userId) => {
   const task = await Task.findById(taskId);
   if (!task) throw new AppError("Task not found", 404);
+  const previousStatus = task.status;
 
   const isAssigned = task.assignees.some(
     a => a.toString() === userId
@@ -130,7 +131,11 @@ exports.moveTask = async (taskId, targetColumnId, newOrder, userId) => {
 
   await task.save();
 
-  return task;
+  return {
+    task,
+    previousStatus,
+    completedNow: previousStatus !== "completed" && task.status === "completed"
+  };
 };
 
 /* ================= DELETE ================= */
