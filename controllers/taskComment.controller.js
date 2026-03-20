@@ -2,6 +2,7 @@ const TaskComment = require("../models/taskCommentModel");
 const Task = require("../models/taskModel");
 const Column = require("../models/columnModel");
 const Board = require("../models/boardModel");
+const User = require("../models/userModel");
 const Notification = require("../models/notificationModel");
 const service = require("../services/taskComment.service");
 
@@ -41,20 +42,6 @@ exports.addTaskComment = async (req, res, next) => {
       "name avatar role"
     );
 
-    const parentTask = await Task.findById(comment.task);
-    if (parentTask) {
-    for (const userId of parentTask.assignees) {
-        if (userId.toString() === req.user.id) continue;
-        const notif = await Notification.create({
-        user: userId,
-        text: `${req.user.name} commented on a task`,
-        type: "task_comment",
-        link: `/projects/${parentTask.project}`
-        });
-        io.to(`user:${userId}`).emit("notification:new", notif);
-    }
-    }
-
     /* ================= SOCKET EMIT ================= */
 
     io.emit("taskCommentAdded", populated);
@@ -89,6 +76,7 @@ exports.convertCommentToTask = async (req, res, next) => {
     }
 
     const parentTask = await Task.findById(comment.task);
+    const actor = await User.findById(req.user.id).select("name");
 
     if (!parentTask) {
       return res.status(404).json({
@@ -120,17 +108,28 @@ exports.convertCommentToTask = async (req, res, next) => {
       parentTask: parentTask._id
     });
 
-    if (parentTask.createdBy?.toString() !== req.user.id) {
-      try {
-        const notif = await Notification.create({
-          user: parentTask.createdBy,
-          text: `${req.user.name} created a subtask`,
-          type: "subtask_created",
-          link: `/projects/${parentTask.project}`
-        });
+    const recipientIds = new Set([
+      parentTask.createdBy?.toString(),
+      ...parentTask.assignees.map((assigneeId) => assigneeId.toString())
+    ]);
 
-        io.to(`user:${parentTask.createdBy}`)
-          .emit("notification:new", notif);
+    recipientIds.delete(req.user.id);
+
+    if (actor?.name && recipientIds.size > 0) {
+      try {
+        for (const recipientId of recipientIds) {
+          if (!recipientId) continue;
+
+          const notif = await Notification.create({
+            user: recipientId,
+            text: `${actor.name} assigned a subtask to ${parentTask.title}`,
+            type: "subtask_created",
+            link: `/projects/${parentTask.project}`
+          });
+
+          io.to(`user:${recipientId}`)
+            .emit("notification:new", notif);
+        }
       } catch (notificationError) {
         console.error("Subtask notification failed:", notificationError);
       }

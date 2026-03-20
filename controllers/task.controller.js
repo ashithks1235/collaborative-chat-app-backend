@@ -452,6 +452,24 @@ exports.deleteTask = async (req, res, next) => {
     const task = await Task.findById(taskId);
     if (!task) throw new AppError("Task not found", 404);
 
+    const channel = await Channel.findById(task.channel).lean();
+    if (!channel) throw new AppError("Channel not found", 404);
+
+    const isChannelAdmin = channel.members.some(
+      (member) =>
+        member.user.toString() === req.user.id &&
+        member.role === "admin"
+    );
+
+    const canDelete =
+      req.user.role === "Admin" ||
+      req.user.role === "Moderator" ||
+      isChannelAdmin;
+
+    if (!canDelete) {
+      throw new AppError("Only channel admins or moderators can delete tasks", 403);
+    }
+
     task.isDeleted = true;
     task.deletedAt = new Date();
     await task.save();
