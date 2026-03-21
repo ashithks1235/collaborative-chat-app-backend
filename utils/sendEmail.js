@@ -1,12 +1,16 @@
-const apiKey =
+const apiKey = (
   process.env.BREVO_API_KEY ||
   process.env.BREVO_KEY ||
-  process.env.BREVO_SECRET_KEY;
-const fromEmail =
+  process.env.BREVO_SECRET_KEY ||
+  ""
+).trim();
+const fromEmail = (
   process.env.BREVO_SENDER_EMAIL ||
   process.env.BREVO_FROM_EMAIL ||
-  process.env.EMAIL_USER;
-const fromName = process.env.BREVO_SENDER_NAME || "Chat App";
+  process.env.EMAIL_USER ||
+  ""
+).trim();
+const fromName = (process.env.BREVO_SENDER_NAME || "Chat App").trim();
 
 if (!apiKey || !fromEmail) {
   console.warn("Brevo configuration is missing. Email delivery is disabled.");
