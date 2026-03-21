@@ -128,7 +128,7 @@ exports.requestDeleteOtp = async (userId) => {
     user.deleteOtpVerifiedAt = undefined;
     await user.save();
     throw new AppError(
-      "Failed to send OTP email. Check the email configuration and try again.",
+      error.message || "Failed to send OTP email. Check the email configuration and try again.",
       500
     );
   }

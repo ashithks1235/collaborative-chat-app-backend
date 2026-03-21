@@ -1,5 +1,5 @@
 const apiKey = process.env.BREVO_API_KEY;
-const fromEmail = process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER;
+const fromEmail = process.env.BREVO_SENDER_EMAIL;
 const fromName = process.env.BREVO_SENDER_NAME || "Chat App";
 
 if (!apiKey || !fromEmail) {
@@ -15,23 +15,30 @@ const sendEmail = async (to, subject, text) => {
     throw new Error("BREVO_SENDER_EMAIL is not configured");
   }
 
-  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "api-key": apiKey,
-      accept: "application/json"
-    },
-    body: JSON.stringify({
-      sender: {
-        name: fromName,
-        email: fromEmail
+  let response;
+
+  try {
+    response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": apiKey,
+        Accept: "application/json"
       },
-      to: [{ email: to }],
-      subject,
-      textContent: text
-    })
-  });
+      body: JSON.stringify({
+        sender: {
+          name: fromName,
+          email: fromEmail
+        },
+        to: [{ email: to }],
+        subject,
+        textContent: text
+      })
+    });
+  } catch (error) {
+    console.error("Email sending failed:", error);
+    throw new Error(`Brevo request failed: ${error.message}`);
+  }
 
   if (!response.ok) {
     let details;
@@ -43,7 +50,13 @@ const sendEmail = async (to, subject, text) => {
     }
 
     console.error("Email sending failed:", details);
-    throw new Error("Brevo email request failed");
+
+    const providerMessage =
+      details?.message ||
+      details?.code ||
+      (typeof details === "string" ? details : "Brevo email request failed");
+
+    throw new Error(providerMessage);
   }
 
   console.log("Email sent successfully with Brevo");
