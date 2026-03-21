@@ -1,39 +1,52 @@
-const sgMail = require("@sendgrid/mail");
-
-const apiKey = process.env.SENDGRID_API_KEY;
-const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER;
+const apiKey = process.env.BREVO_API_KEY;
+const fromEmail = process.env.BREVO_SENDER_EMAIL || process.env.EMAIL_USER;
+const fromName = process.env.BREVO_SENDER_NAME || "Chat App";
 
 if (!apiKey || !fromEmail) {
-  console.warn("SendGrid configuration is missing. Email delivery is disabled.");
-}
-
-if (apiKey) {
-  sgMail.setApiKey(apiKey);
+  console.warn("Brevo configuration is missing. Email delivery is disabled.");
 }
 
 const sendEmail = async (to, subject, text) => {
   if (!apiKey) {
-    throw new Error("SENDGRID_API_KEY is not configured");
+    throw new Error("BREVO_API_KEY is not configured");
   }
 
   if (!fromEmail) {
-    throw new Error("SENDGRID_FROM_EMAIL is not configured");
+    throw new Error("BREVO_SENDER_EMAIL is not configured");
   }
 
-  try {
-    await sgMail.send({
-      to,
-      from: fromEmail,
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "api-key": apiKey,
+      accept: "application/json"
+    },
+    body: JSON.stringify({
+      sender: {
+        name: fromName,
+        email: fromEmail
+      },
+      to: [{ email: to }],
       subject,
-      text
-    });
+      textContent: text
+    })
+  });
 
-    console.log("Email sent successfully with SendGrid");
-  } catch (error) {
-    const details = error.response?.body || error.message;
+  if (!response.ok) {
+    let details;
+
+    try {
+      details = await response.json();
+    } catch {
+      details = await response.text();
+    }
+
     console.error("Email sending failed:", details);
-    throw error;
+    throw new Error("Brevo email request failed");
   }
+
+  console.log("Email sent successfully with Brevo");
 };
 
 module.exports = { sendEmail };
