@@ -116,17 +116,22 @@ exports.requestDeleteOtp = async (userId) => {
 
   await user.save();
 
-  Promise.resolve()
-    .then(() =>
-      sendEmail(
-        user.email,
-        "Confirm Account Deletion",
-        `Your OTP is ${rawOtp}. It expires in 10 minutes.`
-      )
-    )
-    .catch((error) => {
-      console.error("Account deletion OTP email failed:", error);
-    });
+  try {
+    await sendEmail(
+      user.email,
+      "Confirm Account Deletion",
+      `Your OTP is ${rawOtp}. It expires in 10 minutes.`
+    );
+  } catch (error) {
+    user.deleteOtp = undefined;
+    user.deleteOtpExpires = undefined;
+    user.deleteOtpVerifiedAt = undefined;
+    await user.save();
+    throw new AppError(
+      "Failed to send OTP email. Check the email configuration and try again.",
+      500
+    );
+  }
 
   return true;
 };
