@@ -1,39 +1,37 @@
-const nodemailer = require("nodemailer");
+const sgMail = require("@sendgrid/mail");
 
-if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-  console.warn("Email configuration is missing. OTP emails cannot be sent.");
+const apiKey = process.env.SENDGRID_API_KEY;
+const fromEmail = process.env.SENDGRID_FROM_EMAIL || process.env.EMAIL_USER;
+
+if (!apiKey || !fromEmail) {
+  console.warn("SendGrid configuration is missing. Email delivery is disabled.");
 }
 
-const transporter = nodemailer.createTransport({
-  host: "smtp.gmail.com",
-  port: 587,
-  secure: false,
-  requireTLS: true,
-  connectionTimeout: 30000,
-  greetingTimeout: 30000,
-  socketTimeout: 30000,
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  }
-});
+if (apiKey) {
+  sgMail.setApiKey(apiKey);
+}
 
 const sendEmail = async (to, subject, text) => {
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error("Email credentials are not configured");
+  if (!apiKey) {
+    throw new Error("SENDGRID_API_KEY is not configured");
+  }
+
+  if (!fromEmail) {
+    throw new Error("SENDGRID_FROM_EMAIL is not configured");
   }
 
   try {
-    await transporter.sendMail({
-      from: `"Chat App" <${process.env.EMAIL_USER}>`,
+    await sgMail.send({
       to,
+      from: fromEmail,
       subject,
-      text,
+      text
     });
 
-    console.log("Email sent successfully");
+    console.log("Email sent successfully with SendGrid");
   } catch (error) {
-    console.error("Email sending failed:", error);
+    const details = error.response?.body || error.message;
+    console.error("Email sending failed:", details);
     throw error;
   }
 };
