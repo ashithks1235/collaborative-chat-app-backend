@@ -49,6 +49,7 @@ const userSchema = new mongoose.Schema(
 
     deleteOtp: String,
     deleteOtpExpires: Date,
+    deleteOtpVerifiedAt: Date,
   },
   {
     timestamps: true, // ✅ adds createdAt & updatedAt

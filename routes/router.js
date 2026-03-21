@@ -44,6 +44,11 @@ router.post(
   authMiddleware,
   userController.confirmDeleteAccount
 );
+router.post(
+  "/users/verify-delete-otp",
+  authMiddleware,
+  userController.verifyDeleteOtp
+);
 /* ===========================
    CURRENT USER (SESSION RESTORE)
 =========================== */

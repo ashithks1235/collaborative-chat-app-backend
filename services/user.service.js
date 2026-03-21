@@ -1,4 +1,14 @@
 const User = require("../models/userModel");
+const Channel = require("../models/channelModel");
+const Project = require("../models/projectModel");
+const Task = require("../models/taskModel");
+const Message = require("../models/messageModel");
+const Notification = require("../models/notificationModel");
+const Note = require("../models/noteModel");
+const Reminder = require("../models/reminderModel");
+const Activity = require("../models/activityModel");
+const TaskComment = require("../models/taskCommentModel");
+const File = require("../models/fileModel");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
 const AppError = require("../utils/AppError");
@@ -102,19 +112,26 @@ exports.requestDeleteOtp = async (userId) => {
 
   user.deleteOtp = hashedOtp;
   user.deleteOtpExpires = Date.now() + 10 * 60 * 1000;
+  user.deleteOtpVerifiedAt = undefined;
 
   await user.save();
 
-  await sendEmail(
-    user.email,
-    "Confirm Account Deletion",
-    `Your OTP is ${rawOtp}. It expires in 10 minutes.`
-  );
+  Promise.resolve()
+    .then(() =>
+      sendEmail(
+        user.email,
+        "Confirm Account Deletion",
+        `Your OTP is ${rawOtp}. It expires in 10 minutes.`
+      )
+    )
+    .catch((error) => {
+      console.error("Account deletion OTP email failed:", error);
+    });
 
   return true;
 };
 
-exports.confirmDeleteAccount = async (userId, otp) => {
+exports.verifyDeleteOtp = async (userId, otp) => {
   const user = await User.findById(userId);
 
   if (!user) throw new AppError("User not found", 404);
@@ -130,13 +147,63 @@ exports.confirmDeleteAccount = async (userId, otp) => {
 
   if (
     user.deleteOtp !== hashedOtp ||
+    !user.deleteOtpExpires ||
     user.deleteOtpExpires < Date.now()
   ) {
     throw new AppError("Invalid or expired OTP", 400);
   }
 
+  user.deleteOtpVerifiedAt = new Date();
+  await user.save();
+
+  return true;
+};
+
+exports.confirmDeleteAccount = async (userId) => {
+  const user = await User.findById(userId);
+
+  if (!user) throw new AppError("User not found", 404);
+
+  if (user.role === "Admin") {
+    throw new AppError("Super Admin account cannot be deleted", 403);
+  }
+
+  if (
+    !user.deleteOtpVerifiedAt ||
+    Date.now() - new Date(user.deleteOtpVerifiedAt).getTime() > 10 * 60 * 1000
+  ) {
+    throw new AppError("Verify your OTP before deleting the account", 400);
+  }
+
+  await Promise.all([
+    Channel.updateMany({}, { $pull: { members: { user: user._id } } }),
+    Project.updateMany({}, { $pull: { members: user._id } }),
+    Task.updateMany({}, { $pull: { assignees: user._id } }),
+    Message.updateMany(
+      {},
+      {
+        $pull: {
+          seenBy: user._id,
+          mentions: user._id,
+          threadReadBy: user._id
+        }
+      }
+    ),
+    Message.updateMany(
+      { "reactions.users": user._id },
+      { $pull: { "reactions.$[].users": user._id } }
+    ),
+    File.updateMany({}, { $pull: { hiddenFor: user._id } }),
+    Note.deleteMany({ user: user._id }),
+    Reminder.deleteMany({ user: user._id }),
+    Activity.deleteMany({ user: user._id }),
+    Notification.deleteMany({ user: user._id }),
+    TaskComment.deleteMany({ user: user._id })
+  ]);
+
   user.deleteOtp = undefined;
   user.deleteOtpExpires = undefined;
+  user.deleteOtpVerifiedAt = undefined;
 
   await user.deleteOne();
 

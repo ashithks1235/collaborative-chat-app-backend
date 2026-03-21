@@ -63,10 +63,7 @@ exports.requestDeleteOtp = async (req, res, next) => {
 
 exports.confirmDeleteAccount = async (req, res, next) => {
   try {
-    await userService.confirmDeleteAccount(
-      req.user.id,
-      req.body.otp
-    );
+    await userService.confirmDeleteAccount(req.user.id);
 
     res.json({ message: "Account deleted successfully" });
   } catch (err) {
@@ -74,3 +71,15 @@ exports.confirmDeleteAccount = async (req, res, next) => {
   }
 };
 
+exports.verifyDeleteOtp = async (req, res, next) => {
+  try {
+    await userService.verifyDeleteOtp(
+      req.user.id,
+      req.body.otp
+    );
+
+    res.json({ message: "OTP verified successfully" });
+  } catch (err) {
+    next(err);
+  }
+};
