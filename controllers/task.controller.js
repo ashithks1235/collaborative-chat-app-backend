@@ -580,7 +580,7 @@ exports.getSubtasks = async (req, res, next) => {
 exports.updateTask = async (req, res, next) => {
   try {
     const { taskId } = req.params;
-    const { title, description, priority } = req.body;
+    const { title, description, priority, dueDate } = req.body;
 
     const task = await Task.findById(taskId);
 
@@ -591,12 +591,18 @@ exports.updateTask = async (req, res, next) => {
     if (title) task.title = title;
     if (description !== undefined) task.description = description;
     if (priority) task.priority = priority;
+    if (dueDate !== undefined) {
+      task.dueDate = dueDate || null;
+    }
 
     await task.save();
 
     const updatedTask = await Task.findById(task._id)
       .populate("assignees", "name avatar role")
       .populate("createdBy", "name avatar role");
+
+    const io = req.app.get("io");
+    io.to(`project:${task.project}`).emit("task:updated", updatedTask);
 
     res.status(200).json({
       success: true,

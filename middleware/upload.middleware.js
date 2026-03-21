@@ -50,13 +50,17 @@ const allowedTypes = [
   "application/vnd.ms-powerpoint",
   "application/vnd.openxmlformats-officedocument.presentationml.presentation",
 
+  "application/zip",
+  "application/x-zip-compressed",
+  "application/x-rar-compressed",
+  "application/vnd.rar",
   "text/plain"
 ];
 
 const allowedExtensions = [
   ".jpg",".jpeg",".png",".webp",".gif",
   ".mp4",".webm",".ogg",
-  ".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt"
+  ".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt",".zip",".rar"
 ];
 
 /* ==============================
