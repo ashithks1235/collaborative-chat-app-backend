@@ -34,11 +34,16 @@ const allowedTypes = [
   "image/jpeg",
   "image/png",
   "image/webp",
+  "image/avif",
   "image/gif",
+  "image/svg+xml",
+  "image/heic",
+  "image/heif",
 
   "video/mp4",
   "video/webm",
   "video/ogg",
+  "video/quicktime",
 
   "application/pdf",
   "application/msword",
@@ -54,13 +59,15 @@ const allowedTypes = [
   "application/x-zip-compressed",
   "application/x-rar-compressed",
   "application/vnd.rar",
-  "text/plain"
+  "text/plain",
+  "text/csv",
+  "application/json"
 ];
 
 const allowedExtensions = [
-  ".jpg",".jpeg",".png",".webp",".gif",
-  ".mp4",".webm",".ogg",
-  ".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt",".zip",".rar"
+  ".jpg",".jpeg",".png",".webp",".avif",".gif",".svg",".heic",".heif",
+  ".mp4",".webm",".ogg",".mov",
+  ".pdf",".doc",".docx",".xls",".xlsx",".ppt",".pptx",".txt",".csv",".json",".zip",".rar"
 ];
 
 /* ==============================
