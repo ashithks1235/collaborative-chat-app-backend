@@ -8,6 +8,15 @@ const validateObjectId = require("../utils/validateObjectId");
 const sanitizeHtml = require("sanitize-html");
 const path = require("path");
 
+const getAttachmentType = (mimeType) => {
+  const normalized = String(mimeType || "").toLowerCase();
+
+  if (normalized.startsWith("image/")) return "image";
+  if (normalized.startsWith("video/")) return "video";
+
+  return "document";
+};
+
 /* ================= GET MESSAGES ================= */
 
 exports.getMessages = async (channelId, user, page, limit) => {
@@ -78,7 +87,7 @@ exports.sendMessage = async (data, user, files) => {
       const fileDoc = await File.create({
         name: path.basename(file.originalname),
         url: `/uploads/${file.filename}`,
-        type: file.mimetype,
+        type: getAttachmentType(file.mimetype),
         size: file.size,
         channel: channelId,
         uploadedBy: user.id

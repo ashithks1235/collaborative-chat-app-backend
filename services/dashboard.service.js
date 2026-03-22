@@ -18,7 +18,8 @@ exports.getDashboard = async (userId) => {
 
   /* ---------- TASKS ---------- */
   const tasks = await Task.find({
-    assignees: userId
+    assignees: userId,
+    isDeleted: false
   })
     .sort({ updatedAt: -1 })
     .limit(4)
@@ -27,7 +28,10 @@ exports.getDashboard = async (userId) => {
 
   /* ---------- PROJECTS ---------- */
   const projects = await Project.find({
-    createdBy: userId
+    $or: [
+      { createdBy: userId },
+      { members: userId }
+    ]
   })
     .sort({ updatedAt: -1 })
     .limit(4)
