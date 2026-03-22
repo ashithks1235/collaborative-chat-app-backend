@@ -95,13 +95,15 @@ exports.getAdminOverview = async (currentUser) => {
     totalUsers,
     totalChannels,
     totalTasks,
+    completedTasks,
     totalMessages,
     messagesToday,
     tasksToday
   ] = await Promise.all([
     User.countDocuments({ role: { $ne: "Admin" } }),
     Channel.countDocuments(),
-    Task.countDocuments(),
+    Task.countDocuments({ isDeleted: false }),
+    Task.countDocuments({ status: "completed", isDeleted: false }),
     Message.countDocuments(),
     Message.countDocuments({ createdAt: { $gte: today } }),
     Task.countDocuments({ createdAt: { $gte: today } })
@@ -141,6 +143,7 @@ exports.getAdminOverview = async (currentUser) => {
     totalUsers,
     totalChannels,
     totalTasks,
+    completedTasks,
     totalMessages,
     liveUsers: getOnlineUsers(),
     messagesToday,
