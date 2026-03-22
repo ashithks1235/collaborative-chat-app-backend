@@ -176,6 +176,28 @@ exports.createTask = async (req, res, next) => {
     io.to(`project:${req.params.projectId}`)
       .emit("task:created", populatedTask);
 
+    try {
+      const currentUser = await User.findById(req.user.id).select("name");
+      const assigneeIds = Array.isArray(task.assignees)
+        ? task.assignees.map((assigneeId) => assigneeId.toString())
+        : [];
+
+      for (const assigneeId of assigneeIds) {
+        if (!assigneeId || assigneeId === String(req.user.id)) continue;
+
+        const notif = await Notification.create({
+          user: assigneeId,
+          text: `${currentUser?.name || "Someone"} assigned you a task`,
+          type: "task_assigned",
+          link: `/projects/${req.params.projectId}`
+        });
+
+        io.to(`user:${assigneeId}`).emit("notification:new", notif);
+      }
+    } catch (notificationError) {
+      console.error("Direct task assignment notification failed:", notificationError);
+    }
+
     res.status(201).json({
       success: true,
       data: populatedTask
