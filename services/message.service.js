@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const Message = require("../models/messageModel");
 const Channel = require("../models/channelModel");
 const User = require("../models/userModel");
@@ -6,7 +8,6 @@ const Notification = require("../models/notificationModel");
 const AppError = require("../utils/AppError");
 const validateObjectId = require("../utils/validateObjectId");
 const sanitizeHtml = require("sanitize-html");
-const path = require("path");
 
 const getAttachmentType = (mimeType) => {
   const normalized = String(mimeType || "").toLowerCase();
@@ -15,6 +16,19 @@ const getAttachmentType = (mimeType) => {
   if (normalized.startsWith("video/")) return "video";
 
   return "document";
+};
+
+const toDataUrl = (file) => {
+  const mimeType = file.mimetype || "application/octet-stream";
+  const fileBuffer = file.buffer || fs.readFileSync(file.path);
+
+  return "data:" + mimeType + ";base64," + fileBuffer.toString("base64");
+};
+
+const cleanupTempFile = (file) => {
+  if (file && file.path) {
+    fs.promises.unlink(file.path).catch(() => {});
+  }
 };
 
 /* ================= GET MESSAGES ================= */
@@ -26,7 +40,7 @@ exports.getMessages = async (channelId, user, page, limit) => {
   if (!channel) throw new AppError("Channel not found", 404);
 
   const isMember = channel.members.some(
-    m => m.user.toString() === user.id
+    (m) => m.user.toString() === user.id
   );
 
   if (!isMember && user.role !== "Admin") {
@@ -65,7 +79,7 @@ exports.sendMessage = async (data, user, files) => {
   if (!channel) throw new AppError("Channel not found", 404);
 
   const isMember = channel.members.some(
-    m => m.user.toString() === user.id
+    (m) => m.user.toString() === user.id
   );
 
   if (!isMember) {
@@ -80,18 +94,20 @@ exports.sendMessage = async (data, user, files) => {
     ? sanitizeHtml(text.trim(), { allowedTags: [] })
     : "";
 
-  let attachmentIds = [];
+  const attachmentIds = [];
 
-  if (files?.length) {
+  if (files && files.length) {
     for (const file of files) {
       const fileDoc = await File.create({
         name: path.basename(file.originalname),
-        url: `/uploads/${file.filename}`,
+        url: toDataUrl(file),
         type: getAttachmentType(file.mimetype),
         size: file.size,
         channel: channelId,
         uploadedBy: user.id
       });
+
+      cleanupTempFile(file);
       attachmentIds.push(fileDoc._id);
     }
   }
@@ -115,13 +131,13 @@ exports.toggleReaction = async (messageId, emoji, user) => {
   const message = await Message.findById(messageId);
   if (!message) throw new AppError("Message not found", 404);
 
-  const reaction = message.reactions.find(r => r.emoji === emoji);
+  const reaction = message.reactions.find((r) => r.emoji === emoji);
 
   if (!reaction) {
     message.reactions.push({ emoji, users: [user.id] });
   } else {
     const index = reaction.users.findIndex(
-      u => u.toString() === user.id
+      (u) => u.toString() === user.id
     );
 
     if (index > -1) reaction.users.splice(index, 1);
@@ -129,7 +145,7 @@ exports.toggleReaction = async (messageId, emoji, user) => {
 
     if (reaction.users.length === 0) {
       message.reactions = message.reactions.filter(
-        r => r.emoji !== emoji
+        (r) => r.emoji !== emoji
       );
     }
   }
