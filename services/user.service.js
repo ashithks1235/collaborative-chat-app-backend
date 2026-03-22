@@ -1,3 +1,4 @@
+const fs = require("fs");
 const User = require("../models/userModel");
 const Channel = require("../models/channelModel");
 const Project = require("../models/projectModel");
@@ -41,7 +42,14 @@ exports.updateMe = async (userId, data, file) => {
   };
 
   if (file) {
-    updateData.avatar = `/uploads/${file.filename}`;
+    const mimeType = file.mimetype || "image/png";
+    const fileBuffer = file.buffer || fs.readFileSync(file.path);
+
+    updateData.avatar = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+
+    if (file.path) {
+      fs.promises.unlink(file.path).catch(() => {});
+    }
   }
 
   return await User.findByIdAndUpdate(userId, updateData, {
