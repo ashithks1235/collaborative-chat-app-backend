@@ -154,10 +154,25 @@ exports.sendMessage = async (req, res, next) => {
       .populate("attachments");
 
     const io = req.app.get("io");
+    const channel = await Channel.findById(req.body.channelId).select("members").lean();
 
     // 🔥 SOCKET KEPT HERE
     io.to(`channel:${req.body.channelId}`)
       .emit("message:new", populated);
+
+    if (channel?.members?.length) {
+      channel.members.forEach((member) => {
+        const memberId = member.user?.toString?.() || member.user;
+
+        if (!memberId || String(memberId) === String(req.user.id)) return;
+
+        io.to(`user:${memberId}`).emit("channel:unread", {
+          channelId: req.body.channelId,
+          messageId: populated._id,
+          senderId: req.user.id
+        });
+      });
+    }
 
     return success(res, populated, "Message sent", 201);
 
