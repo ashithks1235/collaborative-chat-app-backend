@@ -44,13 +44,13 @@ exports.getMessages = async (req, res, next) => {
       channel: channelId,
       parentMessage: null
     })
-      .populate("sender", "name email avatar role")
-      .populate("attachments")
+      .populate("sender", "name avatar role")
+      .populate("attachments", "name url type size createdAt")
       .populate({
         path: "replyTo",
         populate: [
           { path: "sender", select: "name avatar" },
-          { path: "attachments" }
+          { path: "attachments", select: "name url type size createdAt" }
         ]
       })
       .sort({ createdAt: -1 })
@@ -150,8 +150,8 @@ exports.sendMessage = async (req, res, next) => {
     );
 
     const populated = await Message.findById(msg._id)
-      .populate("sender", "name email avatar role")
-      .populate("attachments");
+      .populate("sender", "name avatar role")
+      .populate("attachments", "name url type size createdAt");
 
     const io = req.app.get("io");
     const channel = await Channel.findById(req.body.channelId).select("members").lean();
@@ -266,7 +266,7 @@ exports.togglePin = async (req, res, next) => {
 
     const populated = await Message.findById(message._id)
       .populate("sender", "name avatar role")
-      .populate("attachments");
+      .populate("attachments", "name url type size createdAt");
 
     const io = req.app.get("io");
 
@@ -325,7 +325,7 @@ exports.editMessage = async (req, res, next) => {
     /* ---------- Populate sender ---------- */
     const populated = await Message.findById(message._id)
       .populate("sender", "name avatar role")
-      .populate("attachments");
+      .populate("attachments", "name url type size createdAt");
 
     const io = req.app.get("io");
 

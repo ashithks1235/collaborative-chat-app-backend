@@ -23,7 +23,7 @@ exports.getDashboard = async (userId) => {
   })
     .sort({ updatedAt: -1 })
     .limit(4)
-    .select("title status project dueDate assignedTo")
+    .select("title status project")
     .lean();
 
   /* ---------- PROJECTS ---------- */

@@ -35,6 +35,7 @@ exports.getFiles = async (userId) => {
     channel: { $in: channelIds },
     hiddenFor: { $ne: userId }
   })
+    .select("name url type size createdAt uploadedBy channel")
     .populate("uploadedBy", "name avatar")
     .populate("channel", "name")
     .sort({ createdAt: -1 })
